@@ -12,7 +12,7 @@
  *
  * Touch: left thumb = move, drag elsewhere = camera, USE / ATTACK / DODGE buttons. Tap the minimap to enlarge it.
  * Keyboard (web): WASD move, mouse-drag camera, E use (hold to chop/mine), Space attack, Shift or Q dodge,
- *                 C craft, B bag, G goals, M map, Esc close.
+ *                 C craft, B bag, G goals, P skills, M map, Esc close.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, useWindowDimensions, ScrollView, Platform, StatusBar } from 'react-native';
@@ -340,6 +340,101 @@ export const SHOP = {
   ],
 };
 
+/* =====================================================================
+   XP + SKILL TREE
+   One character level. Every level-up gives a skill point; nothing else grows on its own,
+   so max health, max energy and everything else comes from the perks you choose.
+   ===================================================================== */
+export const MAX_LEVEL = 20;
+export const xpToNext = (lv) => Math.round(80 * Math.pow(lv, 1.5));
+export const BRANCHES = [
+  { id: 'combat', name: 'Combat', icon: '⚔️', color: '#e5735a' },
+  { id: 'survival', name: 'Survival', icon: '🌿', color: '#6abf5a' },
+  { id: 'craft', name: 'Craft & Gather', icon: '⛏️', color: '#e0b04a' },
+];
+export const TIER_REQ = [0, 2, 4, 6]; // points already spent in a branch to unlock each tier
+export const PERKS = [
+  { id: 'vitality', branch: 'combat', tier: 0, ranks: 3, icon: '❤️', name: 'Vitality', desc: '+10 max health per rank.' },
+  { id: 'heavy', branch: 'combat', tier: 0, ranks: 3, icon: '💪', name: 'Heavy Hitter', desc: '+10% weapon damage per rank.' },
+  { id: 'quickRoll', branch: 'combat', tier: 1, ranks: 1, icon: '💨', name: 'Quick Roll', desc: 'Dodge recovers a third faster and costs no energy.' },
+  { id: 'thickSkin', branch: 'combat', tier: 1, ranks: 2, icon: '🪨', name: 'Thick Skin', desc: 'Take 5% less damage from everything, per rank.' },
+  { id: 'shieldMaster', branch: 'combat', tier: 2, ranks: 1, icon: '🛡️', name: 'Shield Master', desc: 'Your shield blocks 85% of a hit instead of 65%, and covers a wider angle.' },
+  { id: 'crushing', branch: 'combat', tier: 2, ranks: 1, icon: '🔨', name: 'Crushing Blows', desc: 'Any weapon has a 25% chance to stagger a boss mid-attack.' },
+  { id: 'secondWind', branch: 'combat', tier: 3, ranks: 1, icon: '🔥', name: 'Second Wind', desc: 'When a blow would kill you, survive with 30% health instead. Recharges after a night of sleep.' },
+  { id: 'endurance', branch: 'survival', tier: 0, ranks: 3, icon: '⚡', name: 'Endurance', desc: '+15 max energy per rank.' },
+  { id: 'camel', branch: 'survival', tier: 0, ranks: 2, icon: '🐪', name: 'Camel', desc: 'Thirst drains 20% slower per rank.' },
+  { id: 'ironStomach', branch: 'survival', tier: 1, ranks: 1, icon: '🍄', name: 'Iron Stomach', desc: 'Raw meat and wild mushrooms never make you sick.' },
+  { id: 'warmBlooded', branch: 'survival', tier: 1, ranks: 2, icon: '🧣', name: 'Warm-Blooded', desc: 'You lose warmth 25% slower per rank.' },
+  { id: 'hearty', branch: 'survival', tier: 2, ranks: 1, icon: '🍖', name: 'Hearty Eater', desc: 'Food fills you 50% more and heals 5 extra health.' },
+  { id: 'deepSleeper', branch: 'survival', tier: 2, ranks: 1, icon: '💤', name: 'Deep Sleeper', desc: 'Sleep restores energy twice as fast, and a full night heals 25 health.' },
+  { id: 'regen', branch: 'survival', tier: 3, ranks: 1, icon: '✨', name: 'Regeneration', desc: 'Health recovers three times faster while you are fed, warm and watered.' },
+  { id: 'lumberjack', branch: 'craft', tier: 0, ranks: 1, icon: '🪓', name: 'Lumberjack', desc: 'Trees and palms fall in 2 chops instead of 3.' },
+  { id: 'prospector', branch: 'craft', tier: 0, ranks: 2, icon: '⛏️', name: 'Prospector', desc: '25% chance per rank of an extra ore or stone from each vein.' },
+  { id: 'forager', branch: 'craft', tier: 1, ranks: 1, icon: '🌾', name: 'Forager', desc: 'Half the time, you gather one extra stick, stone, fiber or berry.' },
+  { id: 'toolcare', branch: 'craft', tier: 1, ranks: 2, icon: '🧰', name: 'Tool Care', desc: 'Tools, weapons and armor wear out 25% slower per rank.' },
+  { id: 'smelter', branch: 'craft', tier: 2, ranks: 1, icon: '🏭', name: 'Master Smelter', desc: 'Your bronze molds never crack.' },
+  { id: 'thrifty', branch: 'craft', tier: 2, ranks: 1, icon: '⚒️', name: 'Thrifty Smith', desc: 'Everything at the anvil takes 1 fewer bar.' },
+  { id: 'haggler', branch: 'craft', tier: 3, ranks: 1, icon: '🪙', name: 'Haggler', desc: 'Buy for 20% less and sell for 20% more.' },
+];
+// XP for everyday work; kills pay by how tough the enemy is (bosses double)
+export const XP = { gather: 1, chop: 5, mine: 3, craftTool: 5, craftMat: 2, build: 10, smelt: 3, forge: 10, goal: 15, goalL2: 20, sideGoal: 25, pillar: 10 };
+export const perk = (g, id) => (g.skills && g.skills.perks[id]) || 0;
+export const maxHealth = (g) => 100 + 10 * perk(g, 'vitality');
+export const maxEnergy = (g) => 100 + 15 * perk(g, 'endurance');
+const dmgMult = (g) => 1 + 0.1 * perk(g, 'heavy');
+export const buyPrice = (g, o) => (perk(g, 'haggler') ? Math.max(1, Math.round(o.price * 0.8)) : o.price);
+export const sellPrice = (g, o) => (perk(g, 'haggler') ? Math.round(o.price * 1.2) : o.price);
+export const barsFor = (g, f) => Math.max(2, f.bars - perk(g, 'thrifty'));
+function killXp(e) {
+  const D = ENEMIES[e.type];
+  if (e.summoned) return 4;
+  return Math.round(D.hp * (D.boss ? 2 : 1));
+}
+// Forager: half the time, one extra of whatever you just picked up
+const forage = (g) => (perk(g, 'forager') && rng(g) < 0.5 ? 1 : 0);
+export function branchSpent(g, b) {
+  return PERKS.filter((P) => P.branch === b).reduce((s, P) => s + perk(g, P.id), 0);
+}
+export function perkState(g, P) {
+  const rank = perk(g, P.id);
+  const need = TIER_REQ[P.tier];
+  const locked = branchSpent(g, P.branch) < need;
+  const maxed = rank >= P.ranks;
+  return { rank, need, locked, maxed, canLearn: !locked && !maxed && g.skills.points > 0 };
+}
+export function gainXp(g, n) {
+  const S = g.skills;
+  if (!n || S.lv >= MAX_LEVEL) return;
+  S.xp += n;
+  // the HUD shows a small "+N XP" that stacks while gains keep coming
+  if (g.xpPop && g.time - g.xpPop.t < 1.6) g.xpPop = { n: g.xpPop.n + n, t: g.time };
+  else g.xpPop = { n, t: g.time };
+  while (S.lv < MAX_LEVEL && S.xp >= xpToNext(S.lv)) {
+    S.xp -= xpToNext(S.lv);
+    S.lv += 1;
+    S.points += 1;
+    g.levelUpT = g.time;
+    fx(g, 'gold', g.player.x, g.player.z, { y: 1.4 });
+    fx(g, 'sparks', g.player.x, g.player.z, { y: 1.0 });
+    msg(g, `✨ Level up! You are now level ${S.lv}. Spend your skill point in Skills (P).`);
+  }
+  if (S.lv >= MAX_LEVEL) S.xp = 0;
+}
+export function learnPerk(g, id) {
+  const P = PERKS.find((x) => x.id === id);
+  if (!P) return false;
+  const st = perkState(g, P);
+  if (!st.canLearn) return false;
+  g.skills.points -= 1;
+  g.skills.perks[id] = st.rank + 1;
+  const p = g.player;
+  // a fresh rank of Vitality or Endurance comes with the new room filled
+  if (id === 'vitality') p.health = Math.min(maxHealth(g), p.health + 10);
+  if (id === 'endurance') p.energy = Math.min(maxEnergy(g), p.energy + 15);
+  msg(g, `${P.icon} ${P.name}${P.ranks > 1 ? ` ${st.rank + 1}/${P.ranks}` : ''} learned!`);
+  return true;
+}
+
 const RESPAWN = { stick: 80, stone: 140, grass: 70, reeds: 70, bush: 100, mushroom: 110, tree: 200, palm: 220, deadbush: 90, copper: 180, tin: 180, limestone: 150, outcrop: 150 };
 const MINEABLE = { copper: 'copper', tin: 'tin', limestone: 'limestone', outcrop: 'stone' };
 const CHOPPABLE = { tree: true, palm: true };
@@ -440,6 +535,9 @@ export function createGame(seed = Math.floor(Math.random() * 1e9)) {
     done: {},
     collected: { stick: 0, stone: 0, fiber: 0, copper: 0, tin: 0 },
     kills: 0,
+    skills: { xp: 0, lv: 1, points: 0, perks: {}, windUsed: false },
+    xpPop: null,
+    levelUpT: -99,
     sleeping: false,
     sleepAt: null,
     sleepWasNight: false,
@@ -1364,6 +1462,7 @@ function startMummyTransition(g, e) {
 function breakPillar(g, pl) {
   const B = g.w.boss;
   pl.alive = false;
+  gainXp(g, XP.pillar);
   g.shake = Math.max(g.shake, 0.45);
   fx(g, 'poof', pl.x, pl.z, { y: 1.5, color: 0xcdb48a, n: 24 });
   fx(g, 'spirit', pl.x, pl.z, { y: 2 });
@@ -1793,24 +1892,28 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
   const sb = sleepBuild(g);
   const hot = g.region === 'desert' && !night && g.tod > 0.06 && g.tod < 0.6;
   p.hunger = clamp(p.hunger - (g.sleeping ? 0.12 : 0.22 + (p.speed > 4 ? 0.06 : 0)) * gdt, 0, 100);
-  if (g.sleeping) p.energy = clamp(p.energy + 0.8 * gdt, 0, 100);
-  else p.energy = clamp(p.energy - (ENERGY.idle + (p.speed > 4 ? ENERGY.run : 0) + (hot ? ENERGY.heat : 0)) * gdt, 0, 100);
+  const maxE = maxEnergy(g);
+  const maxH = maxHealth(g);
+  if (g.sleeping) p.energy = clamp(p.energy + 0.8 * (perk(g, 'deepSleeper') ? 2 : 1) * gdt, 0, maxE);
+  else p.energy = clamp(p.energy - (ENERGY.idle + (p.speed > 4 ? ENERGY.run : 0) + (hot ? ENERGY.heat : 0)) * gdt, 0, maxE);
+  const thirstK = 1 - 0.2 * perk(g, 'camel');
   if (g.region === 'desert') {
     const shade = inShade(g, p.x, p.z);
     const drain = g.sleeping ? 0.06 : hot ? (shade ? 0.22 : 0.5) : 0.14;
-    p.thirst = clamp(p.thirst - drain * gdt, 0, 100);
+    p.thirst = clamp(p.thirst - drain * thirstK * gdt, 0, 100);
     if (p.thirst < 25 && !g.thirstWarned) {
       g.thirstWarned = true;
       msg(g, 'Your lips are cracking. Find water! 💧');
     }
     if (p.thirst > 40) g.thirstWarned = false;
-  } else if (cave) p.thirst = clamp(p.thirst - 0.12 * gdt, 0, 100); // cool and dry: thirst creeps, but the grotto pool has water
+  } else if (cave) p.thirst = clamp(p.thirst - 0.12 * thirstK * gdt, 0, 100); // cool and dry: thirst creeps, but the grotto pool has water
   else p.thirst = clamp(p.thirst + 0.5 * gdt, 0, 100); // forest streams keep you watered
   let wDelta = night ? (g.region === 'desert' ? -0.65 : -0.5) : 0.6;
   if (!night && g.tod > 0.56) wDelta = -0.1;
   if (cave) wDelta = 0.4; // the rock holds the day's warmth
   if (nearFire || inHut) wDelta = 1.5;
   if (g.sleeping && sb && (sb.type === 'hut' || litFireNear(g, sb.x, sb.z, FIRE_RANGE))) wDelta = 1;
+  if (wDelta < 0) wDelta *= 1 - 0.25 * perk(g, 'warmBlooded');
   p.warmth = clamp(p.warmth + wDelta * gdt, 0, 100);
   if (p.warmth < 25 && !g.coldWarned && !g.sleeping) {
     g.coldWarned = true;
@@ -1821,9 +1924,9 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
   if (p.warmth <= 0) { hp -= 0.6; g.lastHarm = 'the cold'; }
   if (p.energy <= 0) { hp -= 0.35; g.lastHarm = 'exhaustion'; }
   if (g.region !== 'forest' && p.thirst <= 0) { hp -= 0.8; g.lastHarm = 'dehydration'; }
-  if (hp === 0 && p.hunger > 45 && p.warmth > 30 && p.thirst > 30) hp = 0.25;
-  p.health = clamp(p.health + hp * gdt, 0, 100);
-  if (g.god) Object.assign(p, { health: 100, hunger: Math.max(p.hunger, 60), thirst: Math.max(p.thirst, 60), warmth: Math.max(p.warmth, 60), energy: Math.max(p.energy, 60) });
+  if (hp === 0 && p.hunger > 45 && p.warmth > 30 && p.thirst > 30) hp = 0.25 * (perk(g, 'regen') ? 3 : 1);
+  p.health = clamp(p.health + hp * gdt, 0, maxH);
+  if (g.god) Object.assign(p, { health: maxH, hunger: Math.max(p.hunger, 60), thirst: Math.max(p.thirst, 60), warmth: Math.max(p.warmth, 60), energy: Math.max(p.energy, 60) });
 
   // ---- fires burn down ----
   for (const f of buildsOf(w, 'fire')) {
@@ -1847,9 +1950,11 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
       else if (g.sleepWasNight) {
         if (!isNight(g.tod) && g.tod < 0.5 && (g.sleepCrossed || g.tod > 0.03)) {
           wake(g, 'You wake up rested. Good morning!');
+          g.skills.windUsed = false; // Second Wind recharges overnight
+          if (perk(g, 'deepSleeper')) p.health = Math.min(maxH, p.health + 25);
           complete(g, 'sleep');
         }
-      } else if (p.energy >= 100) wake(g, 'You feel rested.');
+      } else if (p.energy >= maxE) wake(g, 'You feel rested.');
     }
   }
 
@@ -2319,8 +2424,9 @@ function damagePlayer(g, amount, src, D, quiet) {
   let note = '';
   if (g.tools.shield && src) {
     const a = Math.atan2(src.x - p.x, src.z - p.z);
-    if (Math.abs(angDiff(a, p.rot)) < 1.2) {
-      amt = src.arrow ? 0 : amt * 0.35;
+    const sm = perk(g, 'shieldMaster') > 0;
+    if (Math.abs(angDiff(a, p.rot)) < (sm ? 1.6 : 1.2)) {
+      amt = src.arrow ? 0 : amt * (sm ? 0.15 : 0.35);
       fx(g, 'sparks', p.x + Math.sin(p.rot) * 0.6, p.z + Math.cos(p.rot) * 0.6, { y: 1.1 });
       wearTool(g, 'shield');
       if (!amt) return msg(g, 'Blocked the arrow!');
@@ -2333,8 +2439,16 @@ function damagePlayer(g, amount, src, D, quiet) {
     ARMOR.forEach((k) => g.tools[k] && wearTool(g, k));
     if (!note) note = 'Your armor absorbs the blow. ';
   }
+  amt *= 1 - 0.05 * perk(g, 'thickSkin');
   amt = Math.max(1, Math.round(amt));
   p.health -= amt;
+  if (p.health <= 0 && perk(g, 'secondWind') && !g.skills.windUsed) {
+    g.skills.windUsed = true;
+    p.health = Math.round(maxHealth(g) * 0.3);
+    fx(g, 'gold', p.x, p.z, { y: 1.2 });
+    g.shake = Math.max(g.shake, 0.5);
+    msg(g, '🔥 Second Wind! You refuse to fall.');
+  }
   p.hurtT = 0.4;
   g.shake = Math.max(g.shake, 0.35);
   g.lastHarm = D ? (D.boss ? `the ${D.name}` : `a ${D.name}`) : 'an arrow';
@@ -2365,6 +2479,7 @@ function updateArrows(g, dt, obs) {
 function killEnemy(g, e) {
   const D = ENEMIES[e.type];
   g.kills += 1;
+  gainXp(g, killXp(e));
   const gold = e.noLoot ? 0 : D.gold[0] + Math.floor(rng(g) * (D.gold[1] - D.gold[0] + 1));
   if (gold > 0) {
     g.gold += gold;
@@ -2372,7 +2487,7 @@ function killEnemy(g, e) {
   }
   if (e.cursed) {
     // the Curse of the Dead: slaying the risen gives back a little life
-    g.player.health = Math.min(100, g.player.health + 8);
+    g.player.health = Math.min(maxHealth(g), g.player.health + 8);
     fx(g, 'spirit', g.player.x, g.player.z, { y: 1 });
   }
   (e.noLoot ? [] : D.drops || []).forEach(([item], i) => {
@@ -2409,6 +2524,7 @@ function killEnemy(g, e) {
 function wearTool(g, tool) {
   const t = g.tools[tool];
   if (!t || !TOOLS[tool].maxDur) return;
+  if (rng(g) < 0.25 * perk(g, 'toolcare')) return;
   t.dur -= 1;
   if (t.dur <= 0) {
     delete g.tools[tool];
@@ -2432,6 +2548,7 @@ function complete(g, id) {
   if ((OBJECTIVES_L2.includes(o) || SIDE_GOALS.includes(o)) && g.level < 2) return;
   g.done[id] = true;
   msg(g, `✓ ${o.text}`);
+  gainXp(g, SIDE_GOALS.includes(o) ? XP.sideGoal : OBJECTIVES_L1.includes(o) ? XP.goal : XP.goalL2);
   if (g.level === 1 && OBJECTIVES_L1.every((ob) => g.done[ob.id])) g.showWin = 'l1';
   if (g.level === 2 && id === 'report') g.showWin = 'l2';
 }
@@ -2448,7 +2565,7 @@ function resolveAction(g) {
     const t = g.w.nodes.find((n) => n.id === p.target);
     const tool = p.action === 'chop' ? 'axe' : 'pickaxe';
     if (!t || !t.alive || !g.tools[tool]) return;
-    t.hp -= 1;
+    t.hp -= p.action === 'chop' && perk(g, 'lumberjack') ? 1.5 : 1;
     t.shakeT = 0.35;
     g.hitStop = 0.05;
     g.shake = Math.max(g.shake, 0.22);
@@ -2469,10 +2586,12 @@ function resolveAction(g) {
         give(g, 'stick', 1, true);
         msg(g, 'Timber! +2 logs, +1 stick');
       }
+      gainXp(g, XP.chop);
       complete(g, 'chop');
     } else {
       const item = MINEABLE[t.type];
-      const n = item === 'limestone' || item === 'stone' ? 2 : 1 + (rng(g) < 0.5 ? 1 : 0);
+      const n = (item === 'limestone' || item === 'stone' ? 2 : 1 + (rng(g) < 0.5 ? 1 : 0)) + (rng(g) < 0.25 * perk(g, 'prospector') ? 1 : 0);
+      gainXp(g, XP.mine);
       give(g, item, n);
       fx(g, 'poof', t.x, t.z, { y: 0.2, color });
     }
@@ -2500,17 +2619,17 @@ function resolveAction(g) {
           }
           continue;
         }
-        e.hp -= T.dmg * (e.mode === 'stun' ? 1.5 : 1);
+        e.hp -= T.dmg * dmgMult(g) * (e.mode === 'stun' ? 1.5 : 1);
         e.hurtT = 0.3;
         if (e.type === 'mummy' && e.phase === 1 && e.hp <= D.hp * 0.5) startMummyTransition(g, e);
         const kb = (D.boss ? 1.5 : D.human ? 5 : 9) * T.kb;
         e.kx = (dx / (d || 1)) * kb;
         e.kz = (dz / (d || 1)) * kb;
-        if (e.state === 'windup' && (!D.boss || T.stagger)) {
+        if (e.state === 'windup' && (!D.boss || T.stagger || (perk(g, 'crushing') && rng(g) < 0.25))) {
           e.state = 'chase';
           e.siege = null;
           e.cd = T.stagger ? 1.0 : 0.6; // a solid hit interrupts small enemies; a mace staggers anyone
-          if (D.boss) msg(g, e.type === 'king' ? 'Your mace staggers the King!' : 'Your mace breaks his spell!');
+          if (D.boss) msg(g, `${w === 'mace' ? 'Your mace' : 'A crushing blow'} ${e.type === 'king' ? 'staggers the King!' : 'breaks his spell!'}`);
         }
         if (e.state === 'idle' && !D.passive) e.state = 'chase';
         hit = true;
@@ -2527,7 +2646,7 @@ function resolveAction(g) {
         const dz = pl.z - p.z;
         const d = Math.hypot(dx, dz);
         if (d < T.reach + 0.85 && Math.abs(angDiff(Math.atan2(dx, dz), p.rot)) < Math.max(T.arc, 0.9)) {
-          pl.hp -= T.dmg;
+          pl.hp -= T.dmg * dmgMult(g);
           pl.hitT = 0.3;
           hit = true;
           fx(g, 'chips', pl.x - dx / (d || 1) * 0.7, pl.z - dz / (d || 1) * 0.7, { y: 1.4, color: 0xcdb48a });
@@ -2680,7 +2799,8 @@ export function doUse(g) {
       break;
     case 'pickup':
       startAction(p, 'pickup', 0.5, n.x, n.z);
-      give(g, n.type === 'drop' ? n.item : n.type, 1);
+      give(g, n.type === 'drop' ? n.item : n.type, 1 + (n.type !== 'drop' ? forage(g) : 0));
+      if (n.type !== 'drop') gainXp(g, XP.gather);
       fx(g, 'poof', n.x, n.z, { y: 0.1, color: 0xd8cfa8 });
       if (n.type === 'drop') n.dead = true;
       else {
@@ -2690,21 +2810,24 @@ export function doUse(g) {
       break;
     case 'fiber':
       startAction(p, 'pickup', 0.5, n.x, n.z);
-      give(g, 'fiber', 1 + (rng(g) < 0.5 ? 1 : 0));
+      give(g, 'fiber', 1 + (rng(g) < 0.5 ? 1 : 0) + forage(g));
+      gainXp(g, XP.gather);
       fx(g, 'leaves', n.x, n.z, { y: 0.4, color: 0xa8c25a, n: 8 });
       n.alive = false;
       n.timer = RESPAWN[n.type];
       break;
     case 'deadbush':
       startAction(p, 'pickup', 0.5, n.x, n.z);
-      give(g, 'stick', 2);
+      give(g, 'stick', 2 + forage(g));
+      gainXp(g, XP.gather);
       fx(g, 'leaves', n.x, n.z, { y: 0.4, color: 0x8a6a42, n: 8 });
       n.alive = false;
       n.timer = RESPAWN.deadbush;
       break;
     case 'berries':
       startAction(p, 'pickup', 0.45, n.x, n.z);
-      give(g, 'berries', 2);
+      give(g, 'berries', 2 + forage(g));
+      gainXp(g, XP.gather);
       n.uses -= 1;
       if (n.uses <= 0) {
         n.alive = false;
@@ -2859,7 +2982,8 @@ export function doDodge(g) {
   const p = g.player;
   if (g.over || g.sleeping || p.dodgeCd > 0) return;
   if (p.actionT > 0 && !(p.action === 'attack' && p.hitDone) && p.action !== 'pickup') return;
-  if (p.energy < ENERGY.dodge) return msg(g, 'Too tired to dodge.');
+  const freeRoll = perk(g, 'quickRoll') > 0;
+  if (!freeRoll && p.energy < ENERGY.dodge) return msg(g, 'Too tired to dodge.');
   const m = Math.hypot(p.moveX, p.moveZ);
   if (m > 0.1) {
     p.dodgeX = p.moveX / m;
@@ -2870,8 +2994,8 @@ export function doDodge(g) {
   }
   startAction(p, 'dodge', 0.42);
   p.rootT = 0; // a dodge roll tears you free of grasping hands
-  p.dodgeCd = 0.75;
-  p.energy = Math.max(0, p.energy - ENERGY.dodge);
+  p.dodgeCd = freeRoll ? 0.5 : 0.75;
+  if (!freeRoll) p.energy = Math.max(0, p.energy - ENERGY.dodge);
   fx(g, 'dust', p.x, p.z);
 }
 
@@ -2945,6 +3069,7 @@ export function craft(g, id) {
     gainTool(g, id);
     msg(g, `You craft a ${TOOLS[id].name.toLowerCase()}! ${TOOLS[id].icon}`);
     if (id === 'waterskin') msg(g, 'Fill it at an oasis.');
+    gainXp(g, XP.craftTool);
     complete(g, id);
     return true;
   }
@@ -2952,6 +3077,7 @@ export function craft(g, id) {
     pay();
     give(g, id, r.makes, true);
     msg(g, `You press mortar and stone into ${r.makes} stone blocks. 🧱`);
+    gainXp(g, XP.craftMat);
     complete(g, 'block');
     return true;
   }
@@ -2984,6 +3110,7 @@ export function craft(g, id) {
     const sh = nearestBuild(g.w, 'shelter', x, z);
     if (sh && dist2(sh.x, sh.z, x, z) > FIRE_RANGE) msg(g, 'Tip: the fire is far from the shelter. Build them closer to sleep.');
   }
+  gainXp(g, XP.build);
   complete(g, id);
   return true;
 }
@@ -3001,7 +3128,7 @@ export function smelt(g, all) {
   for (let i = 0; i < n; i++) {
     g.inv.copper -= 1;
     g.inv.tin -= 1;
-    if (rng(g) < SMELT_CHANCE) made++;
+    if (perk(g, 'smelter') || rng(g) < SMELT_CHANCE) made++;
   }
   g.inv.bronzeBar += made;
   f.activeT = g.time;
@@ -3009,6 +3136,7 @@ export function smelt(g, all) {
   const failed = n - made;
   if (n === 1) msg(g, made ? 'The molten bronze settles into a bar. +1 bronze bar 🟧' : 'The mold cracks. That bronze is ruined.');
   else msg(g, `Smelted ${made} bronze bar${made === 1 ? '' : 's'}${failed ? ` (${failed} cracked)` : ''}. 🟧`);
+  gainXp(g, made * XP.smelt);
   if (made) complete(g, 'smelt');
   return { made, failed };
 }
@@ -3024,11 +3152,13 @@ export function forge(g, id) {
     msg(g, `You already have a ${TOOLS[id].name.toLowerCase()}.`);
     return false;
   }
-  if (g.inv.bronzeBar < recipe.bars) {
-    msg(g, `You need ${recipe.bars} bronze bars.`);
+  const bars = barsFor(g, recipe);
+  if (g.inv.bronzeBar < bars) {
+    msg(g, `You need ${bars} bronze bars.`);
     return false;
   }
-  g.inv.bronzeBar -= recipe.bars;
+  g.inv.bronzeBar -= bars;
+  gainXp(g, XP.forge);
   gainTool(g, id);
   wearTool(g, 'hammer');
   startAction(g.player, 'smith', 0.62, a.x, a.z);
@@ -3043,15 +3173,17 @@ export function eat(g, item) {
   const p = g.player;
   if (!f || g.inv[item] <= 0) return;
   g.inv[item] -= 1;
-  p.hunger = clamp(p.hunger + f.hunger, 0, 100);
+  const hearty = perk(g, 'hearty') > 0;
+  const food = Math.round(f.hunger * (hearty ? 1.5 : 1));
+  p.hunger = clamp(p.hunger + food, 0, 100);
   if (f.thirst) p.thirst = clamp(p.thirst + f.thirst, 0, 100);
-  if (f.heal) p.health = clamp(p.health + f.heal, 0, 100);
+  if (f.heal || hearty) p.health = clamp(p.health + (f.heal || 0) + (hearty ? 5 : 0), 0, maxHealth(g));
   if (!g.sleeping) startAction(p, 'eat', 0.9);
-  if (f.dmg && (f.sick || rng(g) < f.risk)) {
+  if (f.dmg && !perk(g, 'ironStomach') && (f.sick || rng(g) < f.risk)) {
     p.health = Math.max(1, p.health - f.dmg);
     p.hurtT = 0.4;
     msg(g, item === 'rawMeat' ? 'Raw meat made you sick! Cook it next time.' : 'That mushroom was bad… you feel ill.');
-  } else msg(g, `Ate ${ITEMS[item].name.toLowerCase()}. +${f.hunger} food`);
+  } else msg(g, `Ate ${ITEMS[item].name.toLowerCase()}. +${food} food`);
 }
 export function drink(g) {
   const p = g.player;
@@ -3065,7 +3197,8 @@ export function drink(g) {
 export function buy(g, id) {
   const offer = SHOP.buy.find((o) => o.id === id);
   if (!offer) return false;
-  if (g.gold < offer.price) {
+  const price = buyPrice(g, offer);
+  if (g.gold < price) {
     msg(g, 'Merchant: "Come back when you have the gold."');
     return false;
   }
@@ -3073,18 +3206,18 @@ export function buy(g, id) {
     msg(g, 'Merchant: "You already carry one of those."');
     return false;
   }
-  g.gold -= offer.price;
+  g.gold -= price;
   if (offer.tool) gainTool(g, id);
   else g.inv[id] += 1;
-  msg(g, `Bought ${offer.tool ? TOOLS[id].name.toLowerCase() : ITEMS[id].name.toLowerCase()} for ${offer.price} gold.`);
+  msg(g, `Bought ${offer.tool ? TOOLS[id].name.toLowerCase() : ITEMS[id].name.toLowerCase()} for ${price} gold.`);
   return true;
 }
 export function sell(g, id) {
   const offer = SHOP.sell.find((o) => o.id === id);
   if (!offer || g.inv[id] <= 0) return false;
   g.inv[id] -= 1;
-  g.gold += offer.price;
-  msg(g, `Sold ${ITEMS[id].name.toLowerCase()} for ${offer.price} gold.`);
+  g.gold += sellPrice(g, offer);
+  msg(g, `Sold ${ITEMS[id].name.toLowerCase()} for ${sellPrice(g, offer)} gold.`);
   return true;
 }
 
@@ -3197,6 +3330,9 @@ function toDesert(g) {
 export function applyScenario(g, id) {
   const p = g.player;
   g.msgs = [];
+  // start each shortcut at about the level a player would have reached by then, with points unspent
+  const lv = { forestCamp: 2, desertArrive: 3, village: 4, smithing: 4, raid: 4, boss: 5, cave: 5, caveBoss: 6 }[id] || 1;
+  Object.assign(g.skills, { lv, points: lv - 1, xp: 0 });
   if (id === 'forestCamp') {
     ['gather', 'fiber', 'axe', 'club', 'chop'].forEach((k) => (g.done[k] = true));
     gainTool(g, 'axe');
@@ -3310,6 +3446,7 @@ export const CHEATS = [
   { id: 'morning', label: 'Skip to morning' },
   { id: 'raid', label: 'Start a raid now' },
   { id: 'gear', label: 'Full bronze gear' },
+  { id: 'xp', label: 'Level up (+1 skill point)' },
 ];
 export const WARPS = [
   { id: 'village', label: 'Village', region: 'desert' },
@@ -3326,7 +3463,8 @@ export function cheat(g, id) {
   const p = g.player;
   if (id === 'gold') g.gold += 500;
   if (id === 'mats') giveAll(g, { stick: 20, stone: 20, fiber: 20, log: 20, copper: 20, tin: 20, limestone: 20, stoneBlock: 20, bronzeBar: 20, leather: 20, cookedMeat: 5 });
-  if (id === 'heal') Object.assign(p, { health: 100, hunger: 100, energy: 100, warmth: 100, thirst: 100 });
+  if (id === 'heal') Object.assign(p, { health: maxHealth(g), hunger: 100, energy: maxEnergy(g), warmth: 100, thirst: 100 });
+  if (id === 'xp') gainXp(g, xpToNext(g.skills.lv) - g.skills.xp);
   if (id === 'god') g.god = !g.god;
   if (id === 'dusk') g.tod = 0.6;
   if (id === 'morning') {
@@ -5877,6 +6015,80 @@ function BagPanel({ g, onEat, onDrink, onEquip, onClose }) {
   );
 }
 
+function LevelBar({ g }) {
+  const S = g.skills;
+  const need = xpToNext(S.lv);
+  const pop = g.xpPop && g.time - g.xpPop.t < 1.6 ? g.xpPop.n : 0;
+  const fresh = g.time - g.levelUpT < 3;
+  return (
+    <View style={styles.lvRow}>
+      <Text style={[styles.lvTxt, fresh && { color: '#fff2b0' }]}>Lv {S.lv}</Text>
+      <View style={styles.lvBg}>
+        <View style={[styles.lvFill, { width: `${S.lv >= MAX_LEVEL ? 100 : (100 * S.xp) / need}%` }]} />
+      </View>
+      {!!pop && <Text style={styles.lvPop}>+{pop} XP</Text>}
+    </View>
+  );
+}
+
+function SkillsPanel({ g, onLearn, onClose }) {
+  const S = g.skills;
+  const need = xpToNext(S.lv);
+  const maxed = S.lv >= MAX_LEVEL;
+  return (
+    <Panel title={`Skills · Level ${S.lv}`} onClose={onClose}>
+      <Text style={styles.cardDesc}>{maxed ? 'Max level reached.' : `${S.xp} / ${need} XP to level ${S.lv + 1}`}</Text>
+      <View style={styles.xpBigBg}>
+        <View style={[styles.xpBigFill, { width: `${maxed ? 100 : (100 * S.xp) / need}%` }]} />
+      </View>
+      <Text style={[styles.cardTitle, { marginBottom: 2 }]}>
+        {S.points > 0 ? `✨ ${S.points} skill point${S.points === 1 ? '' : 's'} to spend` : 'No skill points to spend'}
+      </Text>
+      <Text style={[styles.cardDesc, { marginBottom: 8 }]}>
+        Earn XP by fighting, gathering, crafting and finishing goals. Each level gives one point. Deeper perks unlock as you spend points in that branch.
+        {' '}Max health {maxHealth(g)} · max energy {maxEnergy(g)}
+      </Text>
+      {BRANCHES.map((B) => {
+        const spent = branchSpent(g, B.id);
+        return (
+          <View key={B.id} style={{ marginTop: 6 }}>
+            <Text style={[styles.section, { color: B.color }]}>
+              {B.icon} {B.name} · {spent} spent
+            </Text>
+            {TIER_REQ.map((req, tier) => (
+              <View key={tier}>
+                <Text style={styles.tierTxt}>{tier === 0 ? 'Tier 1' : `Tier ${tier + 1} · needs ${req} points in ${B.name}`}</Text>
+                {PERKS.filter((P) => P.branch === B.id && P.tier === tier).map((P) => {
+                  const st = perkState(g, P);
+                  return (
+                    <View key={P.id} style={[styles.card, styles.row, st.locked && { opacity: 0.5 }]}>
+                      <View style={styles.iconBox}>
+                        <Text style={styles.iconTxt}>{st.locked ? '🔒' : P.icon}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.cardTitle}>{P.name}</Text>
+                        <Text style={styles.cardDesc}>{P.desc}</Text>
+                        <View style={styles.pips}>
+                          {Array.from({ length: P.ranks }, (_, i) => (
+                            <View key={i} style={[styles.pip, i < st.rank && { backgroundColor: B.color }]} />
+                          ))}
+                        </View>
+                      </View>
+                      <Pressable disabled={!st.canLearn} onPress={() => onLearn(P.id)} style={[styles.learnBtn, !st.canLearn && styles.disabled]}>
+                        <Text style={styles.craftTxt}>{st.maxed ? 'Done' : st.locked ? `${spent}/${st.need}` : 'Learn'}</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+        );
+      })}
+    </Panel>
+  );
+}
+
 function GoalsPanel({ g, onClose }) {
   const list = objectives(g);
   const current = currentObjective(g);
@@ -5933,7 +6145,7 @@ function ShopPanel({ g, onBuy, onSell, onClose }) {
       <Text style={styles.section}>Buy</Text>
       {SHOP.buy.map((o) => {
         const owned = o.tool && !!g.tools[o.id];
-        const ok = g.gold >= o.price && !owned;
+        const ok = g.gold >= buyPrice(g, o) && !owned;
         return (
           <View key={'b' + o.id} style={[styles.card, styles.row]}>
             <View style={styles.iconBox}>
@@ -5942,7 +6154,7 @@ function ShopPanel({ g, onBuy, onSell, onClose }) {
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{nameOf(o)}</Text>
               <Text style={styles.cardDesc}>
-                {o.price} gold{o.id === 'sword' ? ' · 6 damage, fast swings' : o.id === 'shield' ? ' · blocks frontal hits and arrows' : ` · you have ${g.inv[o.id]}`}
+                {buyPrice(g, o)} gold{o.id === 'sword' ? ' · 6 damage, fast swings' : o.id === 'shield' ? ' · blocks frontal hits and arrows' : ` · you have ${g.inv[o.id]}`}
               </Text>
             </View>
             <Pressable disabled={!ok} onPress={() => onBuy(o.id)} style={[styles.eatBtn, !ok && styles.disabled]}>
@@ -5962,7 +6174,7 @@ function ShopPanel({ g, onBuy, onSell, onClose }) {
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{nameOf(o)}</Text>
               <Text style={styles.cardDesc}>
-                {o.price} gold each · you have {g.inv[o.id]}
+                {sellPrice(g, o)} gold each · you have {g.inv[o.id]}
               </Text>
             </View>
             <Pressable disabled={!ok} onPress={() => onSell(o.id)} style={[styles.eatBtn, !ok && styles.disabled]}>
@@ -6074,7 +6286,7 @@ function FurnacePanel({ g, onSmelt, onClose }) {
   const pairs = Math.min(g.inv.copper, g.inv.tin);
   return (
     <Panel title="Furnace" onClose={onClose}>
-      <Text style={styles.dialog}>Melt copper and tin together into bronze. Each bar takes 1 copper ore and 1 tin ore, and about 1 in 5 molds cracks.</Text>
+      <Text style={styles.dialog}>Melt copper and tin together into bronze. Each bar takes 1 copper ore and 1 tin ore, and {perk(g, 'smelter') ? 'your Master Smelter hands never crack a mold.' : 'about 1 in 5 molds cracks.'}</Text>
       <View style={[styles.row, { flexWrap: 'wrap', marginVertical: 8 }]}>
         {[['copper', g.inv.copper], ['tin', g.inv.tin], ['bronzeBar', g.inv.bronzeBar]].map(([k, v]) => (
           <View key={k} style={styles.chip}>
@@ -6113,7 +6325,8 @@ function AnvilPanel({ g, onForge, onClose }) {
       {FORGE.map((f) => {
         const T = TOOLS[f.id];
         const owned = !!g.tools[f.id];
-        const ok = !owned && g.inv.bronzeBar >= f.bars && !!g.tools.hammer;
+        const bars = barsFor(g, f);
+        const ok = !owned && g.inv.bronzeBar >= bars && !!g.tools.hammer;
         return (
           <View key={f.id} style={[styles.card, styles.row]}>
             <View style={styles.iconBox}>
@@ -6122,7 +6335,7 @@ function AnvilPanel({ g, onForge, onClose }) {
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{T.name}</Text>
               <Text style={styles.cardDesc}>
-                {f.bars} bars · {toolStats(f.id)} · lasts {T.maxDur}
+                {bars} bars · {toolStats(f.id)} · lasts {T.maxDur}
               </Text>
             </View>
             <Pressable disabled={!ok} onPress={() => onForge(f.id)} style={[styles.eatBtn, !ok && styles.disabled]}>
@@ -6397,6 +6610,7 @@ function createController(game) {
       if (k === 'c') toggle('craft');
       if (k === 'b' || k === 'i') toggle('bag');
       if (k === 'g') toggle('goals');
+      if (k === 'p') toggle('skills');
       if (k === 'm') c.ui.toggleMap && c.ui.toggleMap();
       if (k === 'escape') setPanel(null);
       if (k.startsWith('arrow') || k === ' ') e.preventDefault();
@@ -6462,6 +6676,7 @@ function createController(game) {
     if (forge(c.g, id)) setPanel(null); // close the anvil so you see the hammering
   };
   c.equip = (id) => equipWeapon(c.g, id);
+  c.learn = (id) => learnPerk(c.g, id);
   c.buyPlot = () => buyPlot(c.g);
   c.eat = (item) => eat(c.g, item);
   c.drink = () => drink(c.g);
@@ -6585,18 +6800,24 @@ export default function App() {
                   {REGIONS[g.region].name}
                   {g.level === 2 || g.gold > 0 ? `  ·  🪙 ${g.gold}` : ''}
                 </Text>
-                <StatBar icon="❤️" value={p.health} color="#ef5350" />
+                <LevelBar g={g} />
+                <StatBar icon="❤️" value={(100 * p.health) / maxHealth(g)} color="#ef5350" />
                 <StatBar icon="🍖" value={p.hunger} color="#f0a030" />
-                <StatBar icon="⚡" value={p.energy} color="#4ea3e0" />
+                <StatBar icon="⚡" value={(100 * p.energy) / maxEnergy(g)} color="#4ea3e0" />
                 <StatBar icon="🔥" value={p.warmth} color="#ff7849" />
                 {g.visitedDesert && <StatBar icon="💧" value={p.thirst} color="#3fc1e8" />}
               </View>
               <View style={{ alignItems: 'flex-end' }} pointerEvents="box-none">
                 <View style={styles.menuCol} dataSet={{ ui: '1' }}>
-                  {[['bag', '🎒', 'Bag'], ['craft', '🔨', 'Craft'], ['goals', '📋', 'Goals'], ...(PLAYTEST ? [['dev', '🧪', 'Test']] : [])].map(([id, icon, lbl]) => (
+                  {[['bag', '🎒', 'Bag'], ['craft', '🔨', 'Craft'], ['skills', '✨', 'Skills'], ['goals', '📋', 'Goals'], ...(PLAYTEST ? [['dev', '🧪', 'Test']] : [])].map(([id, icon, lbl]) => (
                     <Pressable key={id} onPress={() => setPanel(id)} style={({ pressed }) => [styles.menuBtn, pressed && styles.pressed]}>
                       <Text style={styles.menuIcon}>{icon}</Text>
                       <Text style={styles.menuLbl}>{lbl}</Text>
+                      {id === 'skills' && g.skills.points > 0 && (
+                        <View style={styles.badge}>
+                          <Text style={styles.badgeTxt}>{g.skills.points}</Text>
+                        </View>
+                      )}
                     </Pressable>
                   ))}
                 </View>
@@ -6696,6 +6917,7 @@ export default function App() {
           {panel === 'furnace' && <FurnacePanel g={g} onSmelt={(all) => ctl.current.smelt(all)} onClose={closePanel} />}
           {panel === 'anvil' && <AnvilPanel g={g} onForge={(id) => ctl.current.forge(id)} onClose={closePanel} />}
           {panel === 'goals' && <GoalsPanel g={g} onClose={closePanel} />}
+          {panel === 'skills' && <SkillsPanel g={g} onLearn={(id) => ctl.current.learn(id)} onClose={closePanel} />}
           {panel === 'dev' && <DevPanel g={g} onCheat={(id) => ctl.current.cheat(id)} onWarp={(id) => ctl.current.warp(id)} onClose={closePanel} />}
           {panel === 'shop' && <ShopPanel g={g} onBuy={(id) => ctl.current.buy(id)} onSell={(id) => ctl.current.sell(id)} onClose={closePanel} />}
           {panel === 'chief' && <ChiefPanel g={g} onAccept={() => ctl.current.accept()} onTurnIn={() => ctl.current.turnIn()} onBuyPlot={() => ctl.current.buyPlot()} onClose={closePanel} />}
@@ -6771,6 +6993,19 @@ const styles = StyleSheet.create({
   menuBtn: { width: 54, height: 54, borderRadius: 14, backgroundColor: '#0b120ecc', borderWidth: 1, borderColor: '#ffffff1a', alignItems: 'center', justifyContent: 'center', marginLeft: 6 },
   menuIcon: { fontSize: 20 },
   menuLbl: { color: '#d8e0d4', fontSize: 9, fontWeight: '700', marginTop: 1 },
+  badge: { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#e9c46a', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  badgeTxt: { color: '#1a1408', fontSize: 11, fontWeight: '900' },
+  lvRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, marginBottom: 2 },
+  lvTxt: { color: '#e9c46a', fontSize: 11, fontWeight: '900', width: 38 },
+  lvBg: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#ffffff22', overflow: 'hidden' },
+  lvFill: { height: 4, backgroundColor: '#e9c46a' },
+  lvPop: { position: 'absolute', right: 0, top: -14, color: '#ffe08a', fontSize: 11, fontWeight: '900' },
+  xpBigBg: { height: 10, borderRadius: 5, backgroundColor: '#ffffff1a', overflow: 'hidden', marginVertical: 6 },
+  xpBigFill: { height: 10, backgroundColor: '#e9c46a' },
+  pips: { flexDirection: 'row', marginTop: 4 },
+  pip: { width: 12, height: 6, borderRadius: 3, marginRight: 4, backgroundColor: '#ffffff22' },
+  tierTxt: { color: '#9aa89c', fontSize: 11, fontWeight: '700', marginTop: 6, marginBottom: 4 },
+  learnBtn: { backgroundColor: '#e9c46a', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center', marginLeft: 8 },
   minimap: { borderWidth: 2, borderColor: '#0b120e', backgroundColor: '#0b120e' },
   mmDot: { position: 'absolute' },
   mmStar: { position: 'absolute', color: '#ffd166', fontSize: 14, marginLeft: -7, marginTop: -10, ...shadowTxt },
