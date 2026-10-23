@@ -43,6 +43,17 @@ const WATERSKIN_CAP = 4;
 // Playtest tools: shortcut starts on the title screen + a 🧪 cheat panel in game. Set to false before sharing with players.
 const PLAYTEST = true;
 const SMELT_CHANCE = 0.8;
+/* Energy: a full bar lasts about 20+ minutes of active play, so quests and dungeons don't force a trip
+   back to bed. Night still lets you sleep any time, whatever your energy. */
+const ENERGY = {
+  idle: 0.05, // per second, always
+  run: 0.02, // extra while running
+  heat: 0.017, // extra in the desert sun
+  swing: 0.13, // per attack
+  heavySwing: 0.23, // per mace attack
+  dodge: 1, // per dodge roll
+  work: 0.2, // per chop or pick swing
+};
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -1430,7 +1441,8 @@ function updateMummy(g, e, dt, obs) {
   const floating = e.mode === 'float' || (e.phase === 2 && e.mode === 'cast') || (e.mode === 'transition' && e.modeT < 1.6);
   e.hy = lerp(e.hy || 0, floating ? 1.3 : 0, 1 - Math.exp(-dt * 2.5));
   if (!e.awake) {
-    if (!g.over && (inArena(A, p.x, p.z, 0.8) || e.hurtT > 0)) {
+    e.hurtT = 0; // nothing outside the sealed chamber can disturb him
+    if (!g.over && bossDoorOpen(w) && inArena(A, p.x, p.z, 0.8)) {
       e.awake = true;
       e.mode = 'rise';
       e.modeT = 1.8;
@@ -1565,6 +1577,17 @@ function updateMummy(g, e, dt, obs) {
   e.moving = sp > 0.1;
   e.speedNow = sp;
   if (e.moving) e.walk += dt * (2 + sp * 1.4);
+}
+function bossDoorOpen(w) {
+  const d = w.doors && w.doors.find((o) => o.kind === 'boss');
+  return !!(d && d.open);
+}
+// the Guardian's health bar only shows once you've stepped into his opened chamber and he has risen
+export function mummyInView(g) {
+  if (g.region !== 'cave' || !g.w.boss || g.w.boss.done || !bossDoorOpen(g.w)) return null;
+  const e = g.w.enemies.find((o) => o.type === 'mummy');
+  if (!e || !e.awake || !inArena(g.w.boss.arena, g.player.x, g.player.z, 1.05)) return null;
+  return e;
 }
 export function bossNote(g, e) {
   if (e.type !== 'mummy' || !g.w.boss) return '';
@@ -1771,7 +1794,7 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
   const hot = g.region === 'desert' && !night && g.tod > 0.06 && g.tod < 0.6;
   p.hunger = clamp(p.hunger - (g.sleeping ? 0.12 : 0.22 + (p.speed > 4 ? 0.06 : 0)) * gdt, 0, 100);
   if (g.sleeping) p.energy = clamp(p.energy + 0.8 * gdt, 0, 100);
-  else p.energy = clamp(p.energy - (0.15 + (p.speed > 4 ? 0.06 : 0) + (hot ? 0.05 : 0)) * gdt, 0, 100);
+  else p.energy = clamp(p.energy - (ENERGY.idle + (p.speed > 4 ? ENERGY.run : 0) + (hot ? ENERGY.heat : 0)) * gdt, 0, 100);
   if (g.region === 'desert') {
     const shade = inShade(g, p.x, p.z);
     const drain = g.sleeping ? 0.06 : hot ? (shade ? 0.22 : 0.5) : 0.14;
@@ -2692,7 +2715,7 @@ export function doUse(g) {
     case 'mine':
       startAction(p, t.kind, 0.62, n.x, n.z);
       p.target = n.id;
-      p.energy = Math.max(0, p.energy - 0.6);
+      p.energy = Math.max(0, p.energy - ENERGY.work);
       break;
     case 'light':
       g.inv.stick -= 2;
@@ -2829,14 +2852,14 @@ export function doAttack(g) {
   const T = w ? TOOLS[w] : { swing: 0.42, cd: 0.5 };
   startAction(p, 'attack', T.swing);
   p.cooldown = T.cd;
-  p.energy = Math.max(0, p.energy - (w === 'mace' ? 0.7 : 0.4));
+  p.energy = Math.max(0, p.energy - (w === 'mace' ? ENERGY.heavySwing : ENERGY.swing));
 }
 
 export function doDodge(g) {
   const p = g.player;
   if (g.over || g.sleeping || p.dodgeCd > 0) return;
   if (p.actionT > 0 && !(p.action === 'attack' && p.hitDone) && p.action !== 'pickup') return;
-  if (p.energy < 3) return msg(g, 'Too tired to dodge.');
+  if (p.energy < ENERGY.dodge) return msg(g, 'Too tired to dodge.');
   const m = Math.hypot(p.moveX, p.moveZ);
   if (m > 0.1) {
     p.dodgeX = p.moveX / m;
@@ -2848,7 +2871,7 @@ export function doDodge(g) {
   startAction(p, 'dodge', 0.42);
   p.rootT = 0; // a dodge roll tears you free of grasping hands
   p.dodgeCd = 0.75;
-  p.energy = Math.max(0, p.energy - 3);
+  p.energy = Math.max(0, p.energy - ENERGY.dodge);
   fx(g, 'dust', p.x, p.z);
 }
 
@@ -6504,9 +6527,7 @@ export default function App() {
   const king =
     g.region === 'desert'
       ? g.w.enemies.find((e) => e.type === 'king' && e.state !== 'idle' && dist2(e.x, e.z, p.x, p.z) < 25)
-      : g.region === 'cave'
-        ? g.w.enemies.find((e) => e.type === 'mummy' && e.awake && dist2(e.x, e.z, p.x, p.z) < 30)
-        : null;
+      : mummyInView(g);
   const kingNote = king ? bossNote(g, king) : '';
   const raid = g.region === 'desert' ? raiders(g) : [];
   const raidTargetB = raid.length ? g.w.builds.find((b) => raid.some((e) => e.target === b.id)) : null;
