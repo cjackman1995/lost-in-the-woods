@@ -7,6 +7,8 @@
  * Level 2 — Desert: craft a pickaxe, follow the trail east, find the village, mine copper/tin/limestone,
  *           smelt bronze, forge weapons and armor, buy land or defend your camp from nightly raids,
  *           and wipe out the marauder camp for Chief Soloman.
+ * Desert Cave — open from the start: a cave mouth in the cliffs beyond the oasis. Pull two levers to open the
+ *           Ancient Mummy Guardian's chamber, find two unique weapons, and take his golden key for the shortcut out.
  *
  * Touch: left thumb = move, drag elsewhere = camera, USE / ATTACK / DODGE buttons. Tap the minimap to enlarge it.
  * Keyboard (web): WASD move, mouse-drag camera, E use (hold to chop/mine), Space attack, Shift or Q dodge,
@@ -70,6 +72,7 @@ function rng(g) {
 export const REGIONS = {
   forest: { name: 'Forest', r: 62 },
   desert: { name: 'Desert', r: 76 },
+  cave: { name: 'Desert Cave', r: 60 },
 };
 export const DESERT = {
   arrival: { x: -68, z: 2 },
@@ -81,8 +84,16 @@ export const DESERT = {
 // the plot of land Chief Soloman sells, just north of the village (axis-aligned square)
 export const PLOT = { x: -41.8, z: 40.7, half: 8, price: 500 };
 const FOREST_TRAIL = { x: 57, z: 0 };
+// the cave mouth, cut into the cliffs beyond the oasis; it opens toward the middle of the map
+export const CAVE_MOUTH = { x: 12, z: -66 };
+CAVE_MOUTH.rot = Math.atan2(-CAVE_MOUTH.x, -CAVE_MOUTH.z);
 
 let REGION = 'forest'; // which terrain heightAt() samples; set whenever the player travels
+let GRID = null; // the cave's walkable grid while the player is underground (walls are grid cells, not circles)
+function setRegion(g) {
+  REGION = g.region;
+  GRID = g.region === 'cave' && g.w ? g.w.grid : null;
+}
 
 function forestHeight(x, z) {
   const d = Math.hypot(x, z);
@@ -116,6 +127,7 @@ function desertHeight(x, z) {
   return h;
 }
 export function heightAt(x, z) {
+  if (REGION === 'cave') return 0; // the cave floor is flat; pits and water are their own grid cells
   return REGION === 'desert' ? desertHeight(x, z) : forestHeight(x, z);
 }
 
@@ -187,6 +199,7 @@ export const ITEMS = {
   rawMeat: { name: 'Raw meat', icon: '🥩', food: { hunger: 10, dmg: 14, sick: true } },
   cookedMeat: { name: 'Cooked meat', icon: '🍖', food: { hunger: 38, heal: 10 } },
   roastedMushroom: { name: 'Roasted mushroom', icon: '🍢', food: { hunger: 15, heal: 3 } },
+  goldenKey: { name: 'Golden key', icon: '🗝️' },
 };
 /* Weapons: dmg per hit, swing = attack animation (s), cd = time before the next swing, reach/arc = hit area,
    kb = knockback multiplier, stagger = can interrupt even the King's wind-up.
@@ -200,6 +213,9 @@ export const TOOLS = {
   dagger: { name: 'Bronze dagger', icon: '🔪', kind: 'weapon', dmg: 4, swing: 0.26, cd: 0.3, reach: 1.9, arc: 1.1, kb: 0.6, maxDur: 180, desc: 'Lightning-fast stabs.' },
   sword: { name: 'Bronze sword', icon: '🗡️', kind: 'weapon', dmg: 6, swing: 0.36, cd: 0.42, reach: 2.5, arc: 1.45, kb: 1, maxDur: 200, desc: 'Balanced reach and speed.' },
   mace: { name: 'Bronze mace', icon: '🔱', kind: 'weapon', dmg: 9, swing: 0.55, cd: 0.7, reach: 2.2, arc: 1.3, kb: 1.8, stagger: true, maxDur: 220, desc: 'Slow, crushing blows that stagger even the King.' },
+  // unique weapons, found only in the Desert Cave's treasure chests
+  khopesh: { name: 'Ancient Khopesh', icon: '🌙', kind: 'weapon', dmg: 7, swing: 0.3, cd: 0.36, reach: 2.4, arc: 1.75, kb: 1, maxDur: 280, desc: 'A sickle-sword of the old kings. Fast, wide sweeping cuts.' },
+  spear: { name: 'Scarab Spear', icon: '🪲', kind: 'weapon', dmg: 7, swing: 0.42, cd: 0.5, reach: 3.5, arc: 0.7, kb: 1.4, maxDur: 280, desc: 'The longest reach of any weapon. Strike from a safe distance.' },
   shield: { name: 'Bronze shield', icon: '🛡️', kind: 'shield', maxDur: 180, desc: 'Blocks most of a frontal hit, and all arrows.' },
   helmet: { name: 'Bronze helmet', icon: '⛑️', kind: 'armor', armor: 0.1, maxDur: 200 },
   platelegs: { name: 'Bronze platelegs', icon: '👖', kind: 'armor', armor: 0.15, maxDur: 230 },
@@ -269,6 +285,8 @@ export const SIDE_GOALS = [
   { id: 'forge', text: 'Forge bronze gear at an anvil', tip: 'Craft a smithing hammer, build an anvil, then USE it with bronze bars.' },
   { id: 'property', text: 'Buy land from Chief Soloman', tip: `${PLOT.price} gold for a plot beside the village. Marauders never go near it.` },
   { id: 'raid', text: 'Fight off a marauder raid', tip: 'Buildings outside your land are raided every night. Kill every raider to break the raid.' },
+  { id: 'cave', text: 'Find the cave in the cliffs', tip: 'A dark cave mouth is cut into the cliffs beyond the oasis. Bring food, water and your best gear.' },
+  { id: 'mummy', text: 'Defeat the Ancient Mummy Guardian', tip: 'Pull both levers in the cave to open his chamber. When his spirit shields him, smash the four glowing pillars.' },
 ];
 export function objectives(g) {
   return g.level === 1 ? OBJECTIVES_L1 : OBJECTIVES_L2;
@@ -285,6 +303,11 @@ export const ENEMIES = {
   swordsman: { name: 'marauder swordsman', hp: 16, speed: [3.6, 4.0], dmg: [12, 15], siege: 10, reach: 1.6, aggro: 15, windup: 0.55, recover: 1.1, radius: 0.4, human: true, gold: [12, 22], leash: 34 },
   archer: { name: 'marauder archer', hp: 10, speed: [3.4, 3.8], dmg: [8, 10], siege: 6, reach: 16, aggro: 18, windup: 0.8, recover: 1.9, radius: 0.4, human: true, ranged: true, gold: [10, 18], leash: 34 },
   king: { name: 'Marauder King', hp: 70, speed: [3.0, 3.4], dmg: [22, 26], reach: 2.2, aggro: 16, windup: 0.85, recover: 1.4, radius: 0.6, human: true, boss: true, gold: [150, 150], leash: 22 },
+  // the Desert Cave: tougher kin of the surface creatures, plus the restless dead
+  caveRat: { name: 'cave rat', hp: 9, speed: [4.0, 4.0], dmg: [11, 11], reach: 0.95, aggro: 11, windup: 0, recover: 1.1, radius: 0.38, drops: [['rawMeat', 1]], gold: [1, 4] },
+  caveScorpion: { name: 'cave scorpion', hp: 15, speed: [3.4, 3.4], dmg: [15, 15], reach: 1.3, aggro: 9, windup: 0.45, recover: 1.1, radius: 0.55, gold: [5, 12] },
+  skeleton: { name: 'skeleton', hp: 20, speed: [3.5, 3.5], dmg: [15, 15], reach: 1.6, aggro: 13, windup: 0.55, recover: 1.1, radius: 0.4, human: true, gold: [6, 14] },
+  mummy: { name: 'Ancient Mummy Guardian', hp: 140, speed: [2.3, 2.3], dmg: [15, 15], reach: 2.2, aggro: 0, windup: 0.85, recover: 1.4, radius: 0.65, human: true, boss: true, gold: [200, 200] },
 };
 
 export const SHOP = {
@@ -467,7 +490,7 @@ function genForest(g) {
       }
     }
   };
-  w.nodes.push({ id: g.nextId++, type: 'trail', dest: 'desert', x: FOREST_TRAIL.x, z: FOREST_TRAIL.z, alive: true, rot: -Math.PI / 2 });
+  w.nodes.push({ id: g.nextId++, type: 'trail', dest: 'desert', x: FOREST_TRAIL.x, z: FOREST_TRAIL.z, alive: true, rot: -Math.PI / 2, out: { x: -6, z: 0 } });
   [[8.5, 2.5], [-7.5, 6.5], [3, -9.5], [-9, -5]].forEach(([x, z]) => add('tree', x, z, treeExtra(g)));
   [[2.2, 3.0, 'stick'], [-2.6, 2.4, 'stone'], [3.6, -1.4, 'stick'], [-1.4, -3.4, 'stone'], [5.2, 4.2, 'grass'],
    [-4.8, -1.2, 'grass'], [0.6, 5.6, 'stick'], [-5.6, 3.8, 'bush'], [4.4, -4.8, 'stone'], [-3.4, 6.2, 'grass'],
@@ -524,9 +547,22 @@ function genDesert(g) {
     { x: O.x, z: O.z, r: O.r + 3 },
     { x: C.x, z: C.z, r: C.r + 3 },
     { x: A.x, z: A.z, r: 6 },
+    { x: CAVE_MOUTH.x, z: CAVE_MOUTH.z, r: 10 },
   ];
   const { free, polar, add } = placer(g, w, occ);
-  w.nodes.push({ id: g.nextId++, type: 'trail', dest: 'forest', x: A.x + 2, z: A.z, alive: true, rot: Math.PI / 2 });
+  w.nodes.push({ id: g.nextId++, type: 'trail', dest: 'forest', x: A.x + 2, z: A.z, alive: true, rot: Math.PI / 2, out: { x: 6, z: 0 } });
+  // the cave mouth: a dark opening in a rock mass at the cliff's foot, facing the middle of the map
+  {
+    const M0 = CAVE_MOUTH;
+    const fx0 = Math.sin(M0.rot);
+    const fz0 = Math.cos(M0.rot);
+    const local = (lx, lz) => ({ x: M0.x + lx * fz0 + lz * fx0, z: M0.z - lx * fx0 + lz * fz0 });
+    w.nodes.push({ id: g.nextId++, type: 'cavemouth', dest: 'cave', x: M0.x, z: M0.z, alive: true, rot: M0.rot, out: { x: fx0 * 3.2, z: fz0 * 3.2 } });
+    [[0, -4.2, 4.6], [3.7, -0.9, 1.7], [-3.7, -0.9, 1.7]].forEach(([lx, lz, r]) => {
+      const o = local(lx, lz);
+      w.staticObs.push({ x: o.x, z: o.z, r, big: true });
+    });
+  }
 
   // rock mesas
   w.decor.mesas = [];
@@ -733,6 +769,812 @@ function genDesert(g) {
   return w;
 }
 
+/* =====================================================================
+   THE DESERT CAVE — a hand-laid dungeon on a 1-unit grid
+   ===================================================================== */
+const ROCK = 0;
+const FLOOR = 1;
+const PIT = 2;
+const WATER = 3;
+const BRIDGE = 4;
+const DOOR = 5;
+// the layout is traced from the design map: 1 map pixel = 1/8 unit, centered on the drawing (north = up on the minimap)
+export const CPX = (X, Y) => [(X - 545) / 8, (Y - 308) / 8];
+export const CAVE_ROOMS = {
+  boss: [490, 82, 104, 70],
+  nw: [282, 148, 84, 70],
+  junction: [495, 268, 36, 34],
+  ne: [690, 232, 122, 58],
+  trap: [385, 385, 52, 48],
+  alcove: [268, 372, 36, 30],
+  central: [495, 398, 50, 48],
+  grotto: [668, 392, 88, 62],
+  entrance: [495, 540, 62, 56],
+};
+export const CAVE_PATHS = [
+  { pts: [[495, 148], [495, 238]], w: 34 }, // boss chamber ↔ junction, through the great door
+  { pts: [[330, 205], [360, 245], [462, 268]], w: 32 }, // northwest treasure room ↔ junction
+  { pts: [[528, 268], [575, 262], [600, 248]], w: 30 }, // junction ↔ northeast lever room
+  { pts: [[495, 296], [495, 354]], w: 34 }, // junction ↔ central chamber, over the chasm bridge
+  { pts: [[462, 275], [420, 292], [408, 330], [396, 348]], w: 30 }, // the western loop down to the trap room
+  { pts: [[296, 374], [338, 382]], w: 26 }, // trap room ↔ west treasure alcove
+  { pts: [[430, 392], [452, 396]], w: 28 }, // trap room ↔ central chamber
+  { pts: [[538, 400], [594, 400]], w: 26 }, // central chamber ↔ grotto, over the stream bridge
+  { pts: [[495, 440], [495, 494]], w: 34 }, // central chamber ↔ entrance hall
+  { pts: [[495, 560], [495, 616]], w: 30 }, // the way out, up toward daylight
+  { pts: [[548, 556], [720, 562], [838, 522], [880, 452], [882, 220], [862, 140], [790, 96], [585, 88]], w: 28 }, // the shortcut
+];
+const SPIKE = { period: 2.8, up: 0.9, warn: 0.55, dmg: 14 };
+const HAZARD_D = { sand: { name: 'patch of cursed sand' }, hands: { name: 'spectral hand' }, spikes: { name: 'spike trap' } };
+export const MUMMY_ABILITIES = { sand: 'Cursed Sand', hands: 'Spectral Hands', barrage: 'Soul Barrage', curse: 'Curse of the Dead' };
+const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+const hash01 = (x, z) => Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1;
+
+export function cellIdx(G, x, z) {
+  const c = Math.floor(x - G.x0);
+  const r = Math.floor(z - G.z0);
+  if (c < 0 || r < 0 || c >= G.cols || r >= G.rows) return -1;
+  return r * G.cols + c;
+}
+function blockedAt(G, x, z) {
+  const i = cellIdx(G, x, z);
+  return i < 0 || !G.walk[i];
+}
+// solid rock or a shut door: stops projectiles (pits and water do not)
+function wallAt(G, x, z) {
+  const i = cellIdx(G, x, z);
+  return i < 0 || G.t[i] === ROCK || (G.t[i] === DOOR && !G.walk[i]);
+}
+// push a circle out of every blocked cell it overlaps
+function gridPush(G, o, rad) {
+  for (let pass = 0; pass < 2; pass++) {
+    const c0 = Math.floor(o.x - rad - G.x0);
+    const c1 = Math.floor(o.x + rad - G.x0);
+    const r0 = Math.floor(o.z - rad - G.z0);
+    const r1 = Math.floor(o.z + rad - G.z0);
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        if (c >= 0 && r >= 0 && c < G.cols && r < G.rows && G.walk[r * G.cols + c]) continue;
+        const bx = G.x0 + c;
+        const bz = G.z0 + r;
+        const nx = clamp(o.x, bx, bx + 1);
+        const nz = clamp(o.z, bz, bz + 1);
+        const dx = o.x - nx;
+        const dz = o.z - nz;
+        const d = Math.hypot(dx, dz);
+        if (d >= rad) continue;
+        if (d > 1e-5) {
+          o.x = nx + (dx / d) * rad;
+          o.z = nz + (dz / d) * rad;
+        } else {
+          // the center ended up inside the block: shove it out along the shortest way
+          const l = o.x - bx;
+          const rt = bx + 1 - o.x;
+          const tp = o.z - bz;
+          const bt = bz + 1 - o.z;
+          const m = Math.min(l, rt, tp, bt);
+          if (m === l) o.x = bx - rad;
+          else if (m === rt) o.x = bx + 1 + rad;
+          else if (m === tp) o.z = bz - rad;
+          else o.z = bz + 1 + rad;
+        }
+      }
+    }
+  }
+}
+function lineClear(G, ax, az, bx, bz) {
+  const d = Math.hypot(bx - ax, bz - az);
+  const n = Math.ceil(d / 0.45);
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    if (blockedAt(G, ax + (bx - ax) * t, az + (bz - az) * t)) return false;
+  }
+  return true;
+}
+// a breadth-first distance map from the player's cell, so cave creatures path around walls
+function updateFlow(G, x, z) {
+  const src = cellIdx(G, x, z);
+  if (src < 0 || (src === G.flowFrom && !G.flowDirty)) return;
+  G.flowFrom = src;
+  G.flowDirty = false;
+  const dist = G.flow;
+  dist.fill(-1);
+  if (!G.walk[src]) return;
+  const q = G.queue;
+  let h = 0;
+  let t = 0;
+  dist[src] = 0;
+  q[t++] = src;
+  while (h < t) {
+    const i = q[h++];
+    const c = i % G.cols;
+    const r = (i / G.cols) | 0;
+    const nd = dist[i] + 1;
+    for (let k = 0; k < 8; k++) {
+      const dc = DIRS8[k][0];
+      const dr = DIRS8[k][1];
+      const cc = c + dc;
+      const rr = r + dr;
+      if (cc < 0 || rr < 0 || cc >= G.cols || rr >= G.rows) continue;
+      const j = rr * G.cols + cc;
+      if (!G.walk[j] || dist[j] >= 0) continue;
+      if (dc && dr && (!G.walk[r * G.cols + cc] || !G.walk[rr * G.cols + c])) continue; // no cutting corners
+      dist[j] = nd;
+      q[t++] = j;
+    }
+  }
+}
+function flowDist(G, x, z) {
+  const i = cellIdx(G, x, z);
+  return i < 0 ? -1 : G.flow[i];
+}
+// the center of the neighboring cell one step closer to the player
+function flowStep(G, x, z) {
+  const i = cellIdx(G, x, z);
+  if (i < 0) return null;
+  const di = G.flow[i];
+  if (di <= 0) return null;
+  const c = i % G.cols;
+  const r = (i / G.cols) | 0;
+  let best = -1;
+  let bd = di;
+  for (let k = 0; k < 8; k++) {
+    const dc = DIRS8[k][0];
+    const dr = DIRS8[k][1];
+    const cc = c + dc;
+    const rr = r + dr;
+    if (cc < 0 || rr < 0 || cc >= G.cols || rr >= G.rows) continue;
+    const j = rr * G.cols + cc;
+    if (!G.walk[j] || G.flow[j] < 0 || G.flow[j] >= bd) continue;
+    if (dc && dr && (!G.walk[r * G.cols + cc] || !G.walk[rr * G.cols + c])) continue;
+    bd = G.flow[j];
+    best = j;
+  }
+  if (best < 0) return null;
+  return { x: G.x0 + (best % G.cols) + 0.5, z: G.z0 + ((best / G.cols) | 0) + 0.5 };
+}
+
+function genCave(g) {
+  const w = newWorld('cave');
+  const G = { cols: 92, rows: 80, x0: -46, z0: -40, flowFrom: -1, flowDirty: true };
+  const N = G.cols * G.rows;
+  G.t = new Uint8Array(N);
+  G.walk = new Uint8Array(N);
+  G.wallH = new Float32Array(N);
+  G.flow = new Int16Array(N).fill(-1);
+  G.queue = new Int32Array(N);
+  const each = (fn) => {
+    for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) fn(r * G.cols + c, G.x0 + c + 0.5, G.z0 + r + 0.5);
+  };
+  const wob = (x, z) => Math.sin(x * 0.9 + z * 0.4) * 0.5 + Math.sin(x * 0.37 - z * 0.71 + 1.3) * 0.5;
+  const set = (type, test, only) =>
+    each((i, x, z) => {
+      if ((!only || only.includes(G.t[i])) && test(x, z)) G.t[i] = type;
+    });
+  const inEll = (E0, x, z, wobble = 0.1) => {
+    const nx = (x - E0.x) / E0.rx;
+    const nz = (z - E0.z) / E0.rz;
+    return nx * nx + nz * nz < (1 + wobble * wob(x, z)) ** 2;
+  };
+  const segD = (x, z, ax, az, bx, bz) => {
+    const dx = bx - ax;
+    const dz = bz - az;
+    const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+    return Math.hypot(x - ax - dx * t, z - az - dz * t);
+  };
+  // carve the rooms and the passages between them
+  const rooms = {};
+  for (const [k, [X, Y, RX, RY]] of Object.entries(CAVE_ROOMS)) {
+    const [x, z] = CPX(X, Y);
+    rooms[k] = { x, z, rx: RX / 8, rz: RY / 8 };
+    set(FLOOR, (px, pz) => inEll(rooms[k], px, pz));
+  }
+  for (const pa of CAVE_PATHS) {
+    const pts = pa.pts.map(([X, Y]) => CPX(X, Y));
+    const hw = pa.w / 16;
+    set(FLOOR, (x, z) => {
+      for (let i = 1; i < pts.length; i++) if (segD(x, z, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]) < hw * (1 + 0.12 * wob(x * 1.3, z * 1.3))) return true;
+      return false;
+    });
+  }
+  // the chasm between the junction and the central chamber, with a plank bridge across
+  const chasm = { x: -6.25, z: 1.9, rx: 4.6, rz: 1.9 };
+  set(PIT, (x, z) => inEll(chasm, x, z, 0.08));
+  set(BRIDGE, (x) => Math.abs(x + 6) < 1.01, [PIT]);
+  // the stream between the central chamber and the grotto, and the grotto's pool
+  const inlet = { x: 2.6, z: 11.5, rx: 1.7, rz: 3.4 };
+  set(WATER, (x, z) => inEll(inlet, x, z, 0.08));
+  set(BRIDGE, (x, z) => Math.abs(z - 11) < 1.01, [WATER]);
+  const pool = { x: 16.4, z: 10.5, rx: 6.6, rz: 4.6 };
+  set(WATER, (x, z) => inEll(pool, x, z, 0.12), [FLOOR]);
+  // the rubble-choked stairwell in the northeast room
+  set(PIT, (x, z) => x > 31.4 && x < 34.2 && z > -10.5 && z < -7.9);
+  // doors: the great door to the boss, and the two ends of the shortcut
+  w.doors = [
+    { id: g.nextId++, kind: 'boss', x: -6.25, z: -14.1, axis: 'x', half: 2.7, open: false },
+    { id: g.nextId++, kind: 'shortcutA', x: 8.4, z: -27.35, axis: 'z', half: 2.4, open: false },
+    { id: g.nextId++, kind: 'shortcutB', x: 2.9, z: 31.1, axis: 'z', half: 2.4, open: false },
+  ];
+  for (const d of w.doors) {
+    d.cells = [];
+    each((i, x, z) => {
+      if (G.t[i] !== FLOOR) return;
+      const along = d.axis === 'x' ? x - d.x : z - d.z;
+      const across = d.axis === 'x' ? z - d.z : x - d.x;
+      if (Math.abs(across) < 0.75 && Math.abs(along) < d.half) {
+        G.t[i] = DOOR;
+        d.cells.push(i);
+      }
+    });
+  }
+  for (let i = 0; i < N; i++) G.walk[i] = G.t[i] === FLOOR || G.t[i] === BRIDGE ? 1 : 0;
+  // wall heights for the rock that borders open space (also used to keep the camera out of the walls)
+  each((i, x, z) => {
+    if (G.t[i] === DOOR) {
+      G.wallH[i] = 4.4;
+      return;
+    }
+    if (G.t[i] !== ROCK) {
+      G.wallH[i] = -10;
+      return;
+    }
+    const c = i % G.cols;
+    const r = (i / G.cols) | 0;
+    let near = 9;
+    for (let dr = -2; dr <= 2; dr++) {
+      for (let dc = -2; dc <= 2; dc++) {
+        const cc = c + dc;
+        const rr = r + dr;
+        if (cc < 0 || rr < 0 || cc >= G.cols || rr >= G.rows) continue;
+        if (G.t[rr * G.cols + cc] !== ROCK) near = Math.min(near, Math.max(Math.abs(dc), Math.abs(dr)));
+      }
+    }
+    const n = hash01(x, z);
+    G.wallH[i] = near === 1 ? 2.7 + n * 1.3 : near === 2 ? 3.2 + n * 1.5 : 0;
+  });
+  // bridges, for drawing planks
+  const span = (pred) => {
+    let x0 = 1e9;
+    let x1 = -1e9;
+    let z0 = 1e9;
+    let z1 = -1e9;
+    each((i, x, z) => {
+      if (G.t[i] === BRIDGE && pred(x, z)) {
+        x0 = Math.min(x0, x - 0.5);
+        x1 = Math.max(x1, x + 0.5);
+        z0 = Math.min(z0, z - 0.5);
+        z1 = Math.max(z1, z + 0.5);
+      }
+    });
+    return { x0, x1, z0, z1 };
+  };
+  const b1 = span((x, z) => z < 6);
+  const b2 = span((x, z) => z > 6);
+  w.bridges = [
+    { x: (b1.x0 + b1.x1) / 2, z: (b1.z0 + b1.z1) / 2, axis: 'z', len: b1.z1 - b1.z0 + 0.6, wd: b1.x1 - b1.x0 },
+    { x: (b2.x0 + b2.x1) / 2, z: (b2.z0 + b2.z1) / 2, axis: 'x', len: b2.x1 - b2.x0 + 0.6, wd: b2.z1 - b2.z0 },
+  ];
+  let far = 0;
+  each((i, x, z) => G.t[i] !== ROCK && (far = Math.max(far, Math.hypot(x, z))));
+  w.r = far + 3;
+  w.grid = G;
+  w.rooms = rooms;
+  const walkAt = (x, z) => !blockedAt(G, x, z);
+
+  // ---- things to use ----
+  const node = (type, x, z, extra = {}) => {
+    const n = { id: g.nextId++, type, x, z, alive: true, timer: 0, rot: 0, ...extra };
+    w.nodes.push(n);
+    return n;
+  };
+  node('caveexit', -6.25, 36, { dest: 'desert', rot: Math.PI, out: { x: 0, z: -3.6 } });
+  node('lever', rooms.central.x, rooms.central.z, { pulled: false, rot: 0 });
+  node('lever', 19.4, -9.5, { pulled: false, rot: Math.PI / 2 });
+  node('chest', -36.6, 8, { item: 'khopesh', opened: false, rot: Math.PI / 2 });
+  node('chest', rooms.nw.x, -26.2, { item: 'spear', opened: false, rot: 0 });
+  node('stairs', 31.1, -9.2, { rot: -Math.PI / 2 });
+  w.nodes.forEach((n) => n.type !== 'caveexit' && w.staticObs.push({ x: n.x, z: n.z, r: n.type === 'chest' ? 0.65 : n.type === 'stairs' ? 0.5 : 0.35 }));
+  // richer ore veins than up in the sun
+  [['copper', 12.5, -13], ['tin', 26, -5.5], ['copper', 24.5, -13.8], ['tin', 9.5, 15], ['copper', 22.5, 16], ['outcrop', -1.5, 31]].forEach(([t, x, z]) => {
+    if (walkAt(x, z)) node(t, x, z, { ...nodeExtra(g, t), rot: rng(g) * 6.28 });
+  });
+  w.decor.ponds = [{ x: pool.x, z: pool.z, r: 6.2, y: -0.3 }];
+  w.rocks = [{ x: 15.2, z: 9.6, r: 1.2 }, { x: 19, z: 11.8, r: 0.8 }, { x: 13.8, z: 12.4, r: 0.6 }].map((r) => ({ ...r, rot: hash01(r.x, r.z) * 6 }));
+  w.decor.sarc = { x: rooms.boss.x, z: rooms.boss.z - 7.3 };
+  w.staticObs.push({ x: w.decor.sarc.x, z: w.decor.sarc.z, r: 1.2 });
+
+  // ---- standing torches ----
+  w.decor.torches = [];
+  const torch = (R, a, boss) => {
+    for (let k = 0.84; k > 0.5; k -= 0.06) {
+      const x = R.x + Math.cos(a) * R.rx * k;
+      const z = R.z + Math.sin(a) * R.rz * k;
+      if (walkAt(x, z) && walkAt(x + 1, z) && walkAt(x - 1, z) && walkAt(x, z + 1) && walkAt(x, z - 1)) {
+        w.decor.torches.push({ x, z, boss });
+        w.staticObs.push({ x, z, r: 0.3 });
+        return;
+      }
+    }
+  };
+  const torchPlan = {
+    entrance: [-2.2, -0.95, 2.4, 0.7],
+    central: [-2.4, -0.7, 2.4, 0.7],
+    trap: [-2.4, -0.75, 2.4, 0.75],
+    alcove: [-2.0, 2.0],
+    nw: [-2.3, -0.85, 2.5, 0.2],
+    junction: [-2.4],
+    ne: [-2.0, -1.0, 1.2, 2.2],
+    grotto: [-2.2, -0.9, 0.9, 2.2],
+  };
+  Object.entries(torchPlan).forEach(([k, angles]) => angles.forEach((a) => torch(rooms[k], a, false)));
+  [-2.75, -2.0, -1.15, -0.4, 0.75, 2.4].forEach((a) => torch(rooms.boss, a, true));
+
+  // ---- bones, and glowing mushrooms around the pool ----
+  w.decor.bones = [];
+  ['entrance', 'central', 'trap', 'alcove', 'nw', 'ne', 'grotto', 'boss'].forEach((k) => {
+    const R = rooms[k];
+    for (let i = 0, tries = 0; i < (k === 'boss' ? 10 : 5) && tries < 60; tries++) {
+      const a = rng(g) * Math.PI * 2;
+      const rr = Math.sqrt(rng(g)) * 0.85;
+      const x = R.x + Math.cos(a) * R.rx * rr;
+      const z = R.z + Math.sin(a) * R.rz * rr;
+      if (!walkAt(x, z)) continue;
+      w.decor.bones.push({ x, z, rot: rng(g) * 6.28, s: 0.5 + rng(g) * 0.5 });
+      i++;
+    }
+  });
+  w.decor.shrooms = [];
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2 + rng(g) * 0.3;
+    const k = 1.12 + rng(g) * 0.15;
+    const x = pool.x + Math.cos(a) * pool.rx * k;
+    const z = pool.z + Math.sin(a) * pool.rz * k;
+    if (walkAt(x, z)) w.decor.shrooms.push({ x, z, s: 0.6 + rng(g) * 0.6, rot: rng(g) * 6.28 });
+  }
+
+  // ---- the spike trap: three strips across the western chamber, rising in a rolling wave ----
+  w.spikes = [-22.5, -20, -17.5].map((x, i) => ({ id: g.nextId++, x, z: rooms.trap.z, w: 1.6, len: 11, off: i * 0.93, hit: false, wasUp: false }));
+
+  // ---- the boss chamber ----
+  const A = rooms.boss;
+  w.boss = { arena: { x: A.x, z: A.z, rx: A.rx * 0.95, rz: A.rz * 0.95 }, pillars: [], glow: false, torchesOut: false, done: false, sandT: 0, handsT: 0, barrageT: 0, curseT: 0 };
+  [['sand', -7, -3.6], ['hands', 7, -3.6], ['barrage', -7, 3.6], ['curse', 7, 3.6]].forEach(([ability, ox, oz]) => {
+    const pl = { id: g.nextId++, ability, x: A.x + ox, z: A.z + oz, hp: 14, maxHp: 14, alive: true, hitT: 0 };
+    w.boss.pillars.push(pl);
+    w.staticObs.push({ x: pl.x, z: pl.z, r: 0.85, big: true });
+  });
+  w.hazards = [];
+
+  // ---- the cave's inhabitants ----
+  const foe = (type, x, z, extra = {}) => {
+    if (!walkAt(x, z)) return;
+    spawnEnemy(g, type, x, z, w, extra);
+  };
+  const bones = { dormant: true, wakeR: 6.5 };
+  foe('caveRat', -3.5, 27);
+  foe('caveRat', -9, 26.5);
+  foe('skeleton', -9.5, 9, bones);
+  foe('skeleton', -3, 13.5, bones);
+  foe('caveScorpion', -20, 4.6);
+  foe('caveScorpion', -33, 6.5);
+  foe('caveScorpion', -33, 9.5);
+  foe('caveRat', 10, 5.5);
+  foe('caveRat', 21, 15.5);
+  foe('caveRat', 24, 6);
+  foe('skeleton', -6.25, -6);
+  foe('skeleton', -29, -22, bones);
+  foe('skeleton', -36.5, -18, bones);
+  foe('caveScorpion', -30, -15);
+  foe('skeleton', 14, -10, bones);
+  foe('skeleton', 24, -7.5, bones);
+  foe('caveRat', 20, -12);
+  foe('caveRat', 26, -11);
+  foe('caveScorpion', ...CPX(882, 330));
+  foe('caveScorpion', ...CPX(866, 150));
+  spawnEnemy(g, 'mummy', A.x, A.z - 5.2, w, { awake: false, phase: 1, mode: 'dormant', hy: 0, castCd: 2, summonT: 5, burstCd: 0, rot: 0 });
+  return w;
+}
+
+/* ---------- doors, levers, chests ---------- */
+function openDoor(g, d, w = g.w) {
+  if (!d || d.open) return;
+  d.open = true;
+  for (const i of d.cells) {
+    w.grid.walk[i] = 1;
+    w.grid.wallH[i] = -10;
+  }
+  w.grid.flowDirty = true;
+  if (w === g.w) {
+    g.shake = Math.max(g.shake, 0.35);
+    fx(g, 'poof', d.x, d.z, { y: 0.3, color: 0xb89a6a, n: 20 });
+  }
+}
+function leversPulled(w) {
+  return w.nodes.filter((n) => n.type === 'lever' && n.pulled).length;
+}
+function pullLever(g, n) {
+  n.pulled = true;
+  g.shake = Math.max(g.shake, 0.25);
+  fx(g, 'sparks', n.x, n.z, { y: 0.9 });
+  const pulled = leversPulled(g.w);
+  if (pulled >= 2) {
+    openDoor(g, g.w.doors.find((d) => d.kind === 'boss'));
+    msg(g, 'Far away, stone grinds against stone… the great door to the north is open.');
+  } else msg(g, `The lever locks into place with a heavy clunk. (${pulled}/2)`);
+}
+function openChest(g, n) {
+  n.opened = true;
+  const T = TOOLS[n.item];
+  gainTool(g, n.item);
+  fx(g, 'gold', n.x, n.z, { y: 0.8 });
+  fx(g, 'sparks', n.x, n.z, { y: 0.8 });
+  msg(g, `You find the ${T.name}! ${T.icon}`);
+  msg(g, T.desc);
+}
+
+/* ---------- traps ---------- */
+export function spikeState(s, t) {
+  const ph = (t + s.off) % SPIKE.period;
+  return ph < SPIKE.up ? 'up' : ph > SPIKE.period - SPIKE.warn ? 'warn' : 'down';
+}
+function updateSpikes(g) {
+  const p = g.player;
+  for (const s of g.w.spikes) {
+    const up = spikeState(s, g.time) === 'up';
+    if (up && !s.wasUp) s.hit = false;
+    s.wasUp = up;
+    if (up && !s.hit && Math.abs(p.x - s.x) < s.w / 2 + 0.15 && Math.abs(p.z - s.z) < s.len / 2) {
+      s.hit = true;
+      damagePlayer(g, SPIKE.dmg, null, HAZARD_D.spikes);
+    }
+  }
+}
+function updateHazards(g, dt) {
+  const p = g.player;
+  const w = g.w;
+  if (w.boss) for (const pl of w.boss.pillars) if (pl.hitT > 0) pl.hitT -= dt;
+  for (const h of w.hazards) {
+    h.age += dt;
+    const d = dist2(h.x, h.z, p.x, p.z);
+    if (h.kind === 'sand') {
+      if (h.age > h.warn && h.age < h.warn + h.life && d < h.r && p.action !== 'dodge' && !g.over) {
+        h.tick -= dt;
+        if (h.tick <= 0) {
+          h.tick = 0.5;
+          damagePlayer(g, 4, null, HAZARD_D.sand, true);
+          if (!g.sandMsgT || g.time - g.sandMsgT > 3) {
+            g.sandMsgT = g.time;
+            msg(g, 'The cursed sand sears you! Get out of it!');
+          }
+        }
+      }
+    } else if (h.kind === 'hands' && !h.fired && h.age >= h.warn) {
+      h.fired = true;
+      fx(g, 'spirit', h.x, h.z, { y: 0.2 });
+      if (d < h.r && p.action !== 'dodge' && !g.over) {
+        damagePlayer(g, 12, null, HAZARD_D.hands, true);
+        p.rootT = 0.9;
+        msg(g, 'Spectral hands burst from the ground and seize your ankles!');
+      }
+    }
+  }
+  w.hazards = w.hazards.filter((h) => (h.kind === 'sand' ? h.age < h.warn + h.life + 0.6 : h.age < h.warn + 0.8));
+}
+
+/* ---------- the Ancient Mummy Guardian ---------- */
+function inArena(A, x, z, s = 1) {
+  const nx = (x - A.x) / A.rx;
+  const nz = (z - A.z) / A.rz;
+  return nx * nx + nz * nz < s * s;
+}
+function clampToArena(A, o, s) {
+  const nx = (o.x - A.x) / A.rx;
+  const nz = (o.z - A.z) / A.rz;
+  const r = Math.hypot(nx, nz);
+  if (r > s) {
+    o.x = A.x + (nx / r) * s * A.rx;
+    o.z = A.z + (nz / r) * s * A.rz;
+  }
+}
+function arenaSpot(g, A, s) {
+  const a = rng(g) * Math.PI * 2;
+  const r = Math.sqrt(rng(g)) * s;
+  return { x: A.x + Math.cos(a) * r * A.rx, z: A.z + Math.sin(a) * r * A.rz };
+}
+function summonSkeletons(g, e, n, cursed) {
+  const A = g.w.boss.arena;
+  for (let i = 0; i < n; i++) {
+    const a = e.rot + (i ? 1.2 : -1.2);
+    let x = e.x + Math.sin(a) * 2.6;
+    let z = e.z + Math.cos(a) * 2.6;
+    if (blockedAt(g.w.grid, x, z) || !inArena(A, x, z, 0.85)) ({ x, z } = arenaSpot(g, A, 0.6));
+    spawnEnemy(g, 'skeleton', x, z, g.w, { summoned: true, noLoot: true, cursed, riseT: 0.8, alert: true, home: { x: A.x, z: A.z } });
+    fx(g, 'spirit', x, z, { y: 0.3 });
+  }
+}
+function shootSoul(g, e, angle, speed, dmg, kind) {
+  const ux = Math.sin(angle);
+  const uz = Math.cos(angle);
+  g.w.arrows.push({ id: g.nextId++, kind, x: e.x + ux * 0.9, z: e.z + uz * 0.9, vx: ux * speed, vz: uz * speed, life: kind === 'soul' ? 3.4 : 2.4, dmg, y: 1.5 + (e.hy || 0) * 0.7, magic: true });
+}
+function spawnSand(g, B) {
+  const p = g.player;
+  const spots = [{ x: p.x + (rng(g) - 0.5) * 2, z: p.z + (rng(g) - 0.5) * 2 }, arenaSpot(g, B.arena, 0.7), arenaSpot(g, B.arena, 0.7)];
+  for (const s of spots) g.w.hazards.push({ id: g.nextId++, kind: 'sand', x: s.x, z: s.z, r: 2.3, warn: 1.1, life: 6, age: 0, tick: 0 });
+}
+function startMummyCast(e, kind, t) {
+  e.mode = 'cast';
+  e.cast = kind;
+  e.state = 'windup';
+  e.t = t;
+  e.tMax = t;
+}
+function mummyCast(g, e, d, dx, dz) {
+  const aim = Math.atan2(dx, dz);
+  e.state = 'swing';
+  e.t = 0.5;
+  e.swingT = 0.5;
+  if (e.cast === 'bolt') {
+    shootSoul(g, e, aim, 12, 15, 'bolt');
+    e.castCd = 1.9;
+  } else if (e.cast === 'bolt3') {
+    [-0.24, 0, 0.24].forEach((o) => shootSoul(g, e, aim + o, 12, 14, 'bolt'));
+    e.castCd = 2.2;
+  } else if (e.cast === 'burst') {
+    g.shake = Math.max(g.shake, 0.55);
+    fx(g, 'slam', e.x, e.z);
+    fx(g, 'spirit', e.x, e.z, { y: 0.4 });
+    if (d < 3.6) damagePlayer(g, 14, e, ENEMIES.mummy);
+    e.burstCd = 4.5;
+    e.castCd = 1.4;
+  } else if (e.cast === 'summon') {
+    summonSkeletons(g, e, 2, false);
+    msg(g, 'The Guardian raises his staff, and the dead rise with it!');
+    e.summonT = 16;
+    e.castCd = 1.6;
+  } else if (e.cast === 'barrage') {
+    for (let i = 0; i < 7; i++) shootSoul(g, e, aim + (i - 3) * 0.24, 6.5, 11, 'soul');
+  }
+}
+function startMummyTransition(g, e) {
+  const B = g.w.boss;
+  e.hp = ENEMIES.mummy.hp * 0.5;
+  e.phase = 2;
+  e.mode = 'transition';
+  e.modeT = 3.4;
+  e.inv = true;
+  e.pose = 'kneel';
+  e.state = 'idle';
+  e.swingT = 0;
+  B.torchesOut = true;
+  g.shake = Math.max(g.shake, 0.6);
+  msg(g, 'The Mummy Guardian falls to his knees… his wrappings unravel and the torches gutter out!');
+}
+function breakPillar(g, pl) {
+  const B = g.w.boss;
+  pl.alive = false;
+  g.shake = Math.max(g.shake, 0.45);
+  fx(g, 'poof', pl.x, pl.z, { y: 1.5, color: 0xcdb48a, n: 24 });
+  fx(g, 'spirit', pl.x, pl.z, { y: 2 });
+  const left = B.pillars.filter((o) => o.alive).length;
+  if (left) {
+    msg(g, `A pillar shatters! His ${MUMMY_ABILITIES[pl.ability]} fades. (${left} left)`);
+    return;
+  }
+  B.glow = false;
+  g.w.hazards = [];
+  const e = g.w.enemies.find((o) => o.type === 'mummy');
+  if (!e) return;
+  e.mode = 'stun';
+  e.modeT = 4.5;
+  e.inv = false;
+  e.spirit = false;
+  e.phase = 3;
+  e.pose = 'kneel';
+  e.state = 'idle';
+  fx(g, 'spirit', e.x, e.z, { y: 1.5 });
+  msg(g, 'The last pillar falls! The spirit is dragged back into his body. Strike now!');
+}
+function mummyDefeated(g, e, loot) {
+  const w = g.w;
+  const B = w.boss;
+  B.done = true;
+  B.glow = false;
+  B.torchesOut = false;
+  w.hazards = [];
+  w.arrows = w.arrows.filter((a) => !a.magic);
+  for (const o of w.enemies) {
+    if (o.summoned && o !== e) {
+      o.hp = 0;
+      fx(g, 'poof', o.x, o.z, { y: 0.4, color: 0xe6dcc0 });
+    }
+  }
+  fx(g, 'poof', e.x, e.z, { y: 0.8, color: 0xcdb48a, n: 40 });
+  const spot = { x: e.x, z: e.z };
+  collide(spot, 0.9, obstacles(g), w.r - 1);
+  w.nodes.push({ id: g.nextId++, type: 'drop', item: 'goldenKey', x: spot.x, z: spot.z, alive: true, timer: 0, rot: e.rot });
+  msg(g, `The Ancient Mummy Guardian crumbles into sand!${loot}`);
+  msg(g, 'Something gold glints in the sand where he stood…');
+  complete(g, 'mummy');
+}
+// dying in the cave puts the Guardian back to sleep, at full strength, ready for another try
+function resetMummy(g) {
+  const w = g.worlds.cave;
+  if (!w || !w.boss || w.boss.done) return;
+  const B = w.boss;
+  w.enemies = w.enemies.filter((o) => !o.summoned);
+  w.hazards = [];
+  w.arrows = [];
+  B.glow = false;
+  B.torchesOut = false;
+  B.pillars.forEach((pl) => Object.assign(pl, { alive: true, hp: pl.maxHp, hitT: 0 }));
+  const e = w.enemies.find((o) => o.type === 'mummy');
+  if (e) Object.assign(e, { hp: e.maxHp, awake: false, phase: 1, mode: 'dormant', inv: false, spirit: false, pose: null, state: 'idle', hy: 0, x: e.home.x, z: e.home.z, rot: 0, castCd: 2, summonT: 5, burstCd: 0, swingT: 0 });
+}
+function updateMummy(g, e, dt, obs) {
+  const D = ENEMIES.mummy;
+  const p = g.player;
+  const w = g.w;
+  const B = w.boss;
+  const A = B.arena;
+  e.hurtT = Math.max(0, e.hurtT - dt);
+  e.swingT = Math.max(0, e.swingT - dt);
+  e.kx = 0;
+  e.kz = 0;
+  e.moving = false;
+  e.speedNow = 0;
+  const dx = p.x - e.x;
+  const dz = p.z - e.z;
+  const d = Math.hypot(dx, dz) || 0.001;
+  const faceP = () => (e.rot += angDiff(Math.atan2(dx, dz), e.rot) * Math.min(1, dt * 6));
+  const floating = e.mode === 'float' || (e.phase === 2 && e.mode === 'cast') || (e.mode === 'transition' && e.modeT < 1.6);
+  e.hy = lerp(e.hy || 0, floating ? 1.3 : 0, 1 - Math.exp(-dt * 2.5));
+  if (!e.awake) {
+    if (!g.over && (inArena(A, p.x, p.z, 0.8) || e.hurtT > 0)) {
+      e.awake = true;
+      e.mode = 'rise';
+      e.modeT = 1.8;
+      e.inv = true;
+      e.pose = 'kneel';
+      g.shake = Math.max(g.shake, 0.5);
+      fx(g, 'poof', e.x, e.z, { y: 0.3, color: 0xcdb48a, n: 24 });
+      msg(g, 'The sarcophagus grinds open… the Ancient Mummy Guardian rises!');
+    }
+    return;
+  }
+  const engaged = !g.over && inArena(A, p.x, p.z, 1.08);
+  e.modeT = (e.modeT || 0) - dt;
+  let vx = 0;
+  let vz = 0;
+  const move = (tx, tz, s) => {
+    const ddx = tx - e.x;
+    const ddz = tz - e.z;
+    const dd = Math.hypot(ddx, ddz);
+    if (dd > 0.3) {
+      vx = (ddx / dd) * s;
+      vz = (ddz / dd) * s;
+    }
+  };
+  if (e.mode === 'rise') {
+    if (e.modeT <= 0) {
+      e.mode = 'fight';
+      e.inv = false;
+      e.pose = null;
+      e.castCd = 1.2;
+    }
+  } else if (e.mode === 'transition') {
+    faceP();
+    if (!e.spirit && e.modeT < 1.6) {
+      e.spirit = true;
+      g.shake = Math.max(g.shake, 0.7);
+      fx(g, 'spirit', e.x, e.z, { y: 1.4 });
+      msg(g, 'A glowing green spirit tears free of him and lifts him off the ground!');
+    }
+    if (e.modeT <= 0) {
+      e.mode = 'float';
+      e.pose = null;
+      B.glow = true;
+      B.sandT = 2;
+      B.handsT = 3.5;
+      B.barrageT = 5.5;
+      B.curseT = 7.5;
+      msg(g, 'Four pillars blaze with green fire. Smash them to break his shield!');
+    }
+  } else if (e.mode === 'stun') {
+    if (e.modeT <= 0) {
+      e.mode = 'fight';
+      e.pose = null;
+      e.castCd = 1.0;
+      msg(g, 'The Guardian staggers back to his feet!');
+    }
+  } else if (e.mode === 'cast') {
+    faceP();
+    if (e.state === 'windup') {
+      e.t -= dt;
+      if (e.t <= 0) mummyCast(g, e, d, dx, dz);
+    } else if (e.state === 'swing') {
+      e.t -= dt;
+      if (e.t <= 0) {
+        e.mode = e.phase === 2 ? 'float' : 'fight';
+        e.state = 'chase';
+      }
+    } else {
+      // a mace blow broke the spell
+      e.mode = e.phase === 2 ? 'float' : 'fight';
+      e.castCd = 1.2;
+    }
+  } else if (!engaged) {
+    // the player left the chamber: drift back to the sarcophagus and wait
+    e.state = 'idle';
+    move(e.home.x, e.home.z, 2);
+  } else if (e.mode === 'fight') {
+    e.state = 'chase';
+    faceP();
+    if (d < 4.5) move(e.x - dx, e.z - dz, D.speed[0]);
+    else if (d > 9) move(p.x, p.z, D.speed[0]);
+    else {
+      const s = e.id % 2 ? 1 : -1;
+      vx = (-dz / d) * 1.1 * s;
+      vz = (dx / d) * 1.1 * s;
+    }
+    e.castCd -= dt;
+    e.summonT -= dt;
+    e.burstCd -= dt;
+    if (e.castCd <= 0) {
+      const summons = w.enemies.filter((o) => o.summoned && o.hp > 0).length;
+      if (d < 3.2 && e.burstCd <= 0) startMummyCast(e, 'burst', 0.75);
+      else if (e.phase === 1 && e.summonT <= 0 && summons < 2) startMummyCast(e, 'summon', 1.2);
+      else startMummyCast(e, e.phase === 3 || e.hp < D.hp * 0.75 ? 'bolt3' : 'bolt', 0.85);
+    }
+  } else if (e.mode === 'float') {
+    e.state = 'chase';
+    faceP();
+    if (d < 6) move(e.x - dx, e.z - dz, 1.7);
+    else if (d > 10) move(p.x, p.z, 1.7);
+    const alive = (k) => B.pillars.some((pl) => pl.alive && pl.ability === k);
+    for (const k of ['sand', 'hands', 'barrage', 'curse']) B[k + 'T'] -= dt;
+    if (alive('sand') && B.sandT <= 0) {
+      B.sandT = 6.5;
+      spawnSand(g, B);
+    }
+    if (alive('hands') && B.handsT <= 0) {
+      B.handsT = 4.2;
+      w.hazards.push({ id: g.nextId++, kind: 'hands', x: p.x, z: p.z, r: 1.5, warn: 1.0, age: 0 });
+    }
+    if (alive('curse') && B.curseT <= 0) {
+      B.curseT = 13;
+      if (w.enemies.filter((o) => o.cursed && o.hp > 0).length < 3) {
+        summonSkeletons(g, e, 2, true);
+        msg(g, 'The Curse of the Dead! Slay the risen to steal back their life.');
+      }
+    }
+    if (alive('barrage') && B.barrageT <= 0) {
+      B.barrageT = 7;
+      startMummyCast(e, 'barrage', 1.0);
+    }
+  }
+  if (e.state === 'windup' || e.state === 'swing' || e.mode === 'rise' || e.mode === 'transition' || e.mode === 'stun') {
+    vx = 0;
+    vz = 0;
+  }
+  e.x += vx * dt;
+  e.z += vz * dt;
+  collide(e, D.radius, obs, w.r);
+  clampToArena(A, e, 0.8);
+  const sp = Math.hypot(vx, vz);
+  e.moving = sp > 0.1;
+  e.speedNow = sp;
+  if (e.moving) e.walk += dt * (2 + sp * 1.4);
+}
+export function bossNote(g, e) {
+  if (e.type !== 'mummy' || !g.w.boss) return '';
+  const B = g.w.boss;
+  if (e.mode === 'transition') return 'The chamber shakes…';
+  if (B.glow) return `🛡️ Shielded · smash the glowing pillars (${B.pillars.filter((pl) => pl.alive).length} left)`;
+  if (e.mode === 'stun') return '⚔️ Vulnerable! Strike now!';
+  return '';
+}
+
 export function spawnEnemy(g, type, x, z, w = g.w, extra = {}) {
   const D = ENEMIES[type];
   const e = {
@@ -752,28 +1594,42 @@ export function startLevel2(g) {
 }
 
 const absTime = (g) => g.day + g.tod;
+// trails and cave openings: anything you can USE to travel to another region
+const PORTAL = { trail: true, cavemouth: true, caveexit: true };
 export function travel(g, dest) {
   const p = g.player;
+  const from = g.region;
   g.w.leftAt = absTime(g);
-  g.worlds[g.region] = g.w;
+  g.worlds[from] = g.w;
   g.region = dest;
   REGION = dest;
-  if (!g.worlds[dest]) g.worlds[dest] = dest === 'desert' ? genDesert(g) : genForest(g);
+  if (!g.worlds[dest]) g.worlds[dest] = dest === 'desert' ? genDesert(g) : dest === 'cave' ? genCave(g) : genForest(g);
   g.w = g.worlds[dest];
+  setRegion(g);
   g.w.arrows = [];
-  const trail = g.w.nodes.find((n) => n.type === 'trail');
-  p.x = trail.x + (dest === 'desert' ? 6 : -6);
-  p.z = trail.z;
-  p.rot = dest === 'desert' ? Math.PI / 2 : -Math.PI / 2;
+  const portals = g.w.nodes.filter((n) => PORTAL[n.type]);
+  const gate = portals.find((n) => n.dest === from) || portals[0];
+  p.x = gate.x + gate.out.x;
+  p.z = gate.z + gate.out.z;
+  p.rot = Math.atan2(gate.out.x, gate.out.z);
   p.action = null;
   p.actionT = 0;
+  p.rootT = 0;
   g.fx = [];
   if (dest === 'desert') {
-    msg(g, 'The trees thin out into an endless sea of sand…');
+    if (from === 'cave') msg(g, 'You climb out of the cave, squinting into the sun.');
+    else msg(g, 'The trees thin out into an endless sea of sand…');
     if (!g.visitedDesert) msg(g, 'The sun beats down. Keep an eye on your thirst 💧');
     g.visitedDesert = true;
+    g.caveSeen = g.caveSeen || from === 'cave';
     complete(g, 'travel');
     raidsWhileAway(g);
+  } else if (dest === 'cave') {
+    msg(g, 'Cool, stale air… your eyes slowly adjust to the dark.');
+    if (!g.visitedCave) msg(g, 'Bones litter the floor. Something down here is still moving.');
+    g.visitedCave = true;
+    g.caveSeen = true;
+    complete(g, 'cave');
   } else msg(g, 'Back in the cool shade of the forest.');
 }
 
@@ -806,6 +1662,7 @@ function collide(obj, rad, obs, R) {
       obj.z = o.z + (dz / d) * min;
     }
   }
+  if (REGION === 'cave' && GRID) gridPush(GRID, obj, rad);
   const d = Math.hypot(obj.x, obj.z);
   if (d > R) {
     obj.x *= R / d;
@@ -816,7 +1673,7 @@ function litFireNear(g, x, z, maxD) {
   return nearestBuild(g.w, 'fire', x, z, maxD, (f) => f.lit);
 }
 function inShade(g, x, z) {
-  if (g.region !== 'desert') return true;
+  if (g.region !== 'desert') return true; // the forest canopy and the cave are always shaded
   if (inVillage(x, z) || inPlot(x, z)) return true;
   for (const p of g.w.decor.ponds) if (dist2(x, z, p.x, p.z) < p.r + 5) return true;
   return !!nearestBuild(g.w, 'hut', x, z, 3.5);
@@ -838,9 +1695,10 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
     g.hitStop -= dt;
     return;
   }
-  REGION = g.region;
+  setRegion(g);
   const p = g.player;
   const w = g.w;
+  const cave = g.region === 'cave';
   const gdt = dt * (g.sleeping ? 28 : 1);
   g.time += dt;
   g.shake = Math.max(0, g.shake - dt * 2.5);
@@ -855,9 +1713,9 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
     if (g.sleeping) g.sleepCrossed = true;
     else msg(g, `☀ Day ${g.day} begins`);
   }
-  if (prev < 0.56 && g.tod >= 0.56) msg(g, g.region === 'desert' ? 'The sun is setting. Desert nights are cold.' : 'The sun is setting. Rats grow bolder in the dark, but they fear fire.');
-  if (prev < 0.66 && g.tod >= 0.66) msg(g, 'Night has fallen.');
-  const night = isNight(g.tod);
+  if (!cave && prev < 0.56 && g.tod >= 0.56) msg(g, g.region === 'desert' ? 'The sun is setting. Desert nights are cold.' : 'The sun is setting. Rats grow bolder in the dark, but they fear fire.');
+  if (!cave && prev < 0.66 && g.tod >= 0.66) msg(g, 'Night has fallen.');
+  const night = !cave && isNight(g.tod); // underground there is no day or night
   const nearFire = !!litFireNear(g, p.x, p.z, 7);
   const inHut = !!nearestBuild(w, 'hut', p.x, p.z, 2.2);
   const obs = obstacles(g);
@@ -876,9 +1734,9 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
       p.z += p.dodgeZ * spd * dt;
       p.speed = spd;
     } else {
-      const busy = p.actionT > 0 && (p.action === 'chop' || p.action === 'mine' || p.action === 'smith' || p.action === 'eat');
+      const busy = (p.actionT > 0 && (p.action === 'chop' || p.action === 'mine' || p.action === 'smith' || p.action === 'eat')) || p.rootT > 0;
       if (mag > 0.08 && !busy) {
-        const tired = p.energy < 8 || p.hunger <= 0 || (g.region === 'desert' && p.thirst <= 0);
+        const tired = p.energy < 8 || p.hunger <= 0 || (g.region !== 'forest' && p.thirst <= 0);
         const spd = (tired ? 2.4 : 5.4) * mag * (p.actionT > 0 ? 0.5 : 1);
         p.x += (input.x / mag) * spd * dt;
         p.z += (input.z / mag) * spd * dt;
@@ -906,6 +1764,7 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
   p.cooldown = Math.max(0, p.cooldown - dt);
   p.dodgeCd = Math.max(0, p.dodgeCd - dt);
   p.hurtT = Math.max(0, p.hurtT - dt);
+  p.rootT = Math.max(0, (p.rootT || 0) - dt);
 
   // ---- survival stats ----
   const sb = sleepBuild(g);
@@ -922,9 +1781,11 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
       msg(g, 'Your lips are cracking. Find water! 💧');
     }
     if (p.thirst > 40) g.thirstWarned = false;
-  } else p.thirst = clamp(p.thirst + 0.5 * gdt, 0, 100); // forest streams keep you watered
+  } else if (cave) p.thirst = clamp(p.thirst - 0.12 * gdt, 0, 100); // cool and dry: thirst creeps, but the grotto pool has water
+  else p.thirst = clamp(p.thirst + 0.5 * gdt, 0, 100); // forest streams keep you watered
   let wDelta = night ? (g.region === 'desert' ? -0.65 : -0.5) : 0.6;
   if (!night && g.tod > 0.56) wDelta = -0.1;
+  if (cave) wDelta = 0.4; // the rock holds the day's warmth
   if (nearFire || inHut) wDelta = 1.5;
   if (g.sleeping && sb && (sb.type === 'hut' || litFireNear(g, sb.x, sb.z, FIRE_RANGE))) wDelta = 1;
   p.warmth = clamp(p.warmth + wDelta * gdt, 0, 100);
@@ -936,7 +1797,7 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
   if (p.hunger <= 0) { hp -= 0.7; g.lastHarm = 'starvation'; }
   if (p.warmth <= 0) { hp -= 0.6; g.lastHarm = 'the cold'; }
   if (p.energy <= 0) { hp -= 0.35; g.lastHarm = 'exhaustion'; }
-  if (g.region === 'desert' && p.thirst <= 0) { hp -= 0.8; g.lastHarm = 'dehydration'; }
+  if (g.region !== 'forest' && p.thirst <= 0) { hp -= 0.8; g.lastHarm = 'dehydration'; }
   if (hp === 0 && p.hunger > 45 && p.warmth > 30 && p.thirst > 30) hp = 0.25;
   p.health = clamp(p.health + hp * gdt, 0, 100);
   if (g.god) Object.assign(p, { health: 100, hunger: Math.max(p.hunger, 60), thirst: Math.max(p.thirst, 60), warmth: Math.max(p.warmth, 60), energy: Math.max(p.energy, 60) });
@@ -974,6 +1835,10 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
     if (!g.done.village && g.level === 2) msg(g, 'You reach the village. The people here look parched.');
     complete(g, 'village');
   }
+  if (g.region === 'desert' && !g.caveSeen && dist2(p.x, p.z, CAVE_MOUTH.x, CAVE_MOUTH.z) < 30) {
+    g.caveSeen = true;
+    msg(g, 'A dark cave mouth yawns in the cliffs ahead…');
+  }
 
   // ---- regrowth ----
   for (const n of w.nodes) {
@@ -996,7 +1861,7 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
 
   // ---- wildlife respawn ----
   w.spawnT -= gdt;
-  if (w.spawnT <= 0 && !g.sleeping) {
+  if (w.spawnT <= 0 && !g.sleeping && !cave) {
     const forest = g.region === 'forest';
     const [lo, hi] = forest ? RATS.every[night ? 1 : 0] : night ? [8, 14] : [14, 24];
     w.spawnT = lo + rng(g) * (hi - lo);
@@ -1022,6 +1887,13 @@ export function step(g, dt, input = { x: 0, z: 0 }) {
 
   // ---- nightly raids on camps built outside your land ----
   if (g.region === 'desert') updateRaids(g, night);
+
+  // ---- the cave: pathfinding, traps and the Guardian's curses ----
+  if (cave) {
+    updateFlow(w.grid, p.x, p.z);
+    updateSpikes(g);
+    updateHazards(g, dt);
+  }
 
   // ---- enemies + arrows ----
   for (const e of w.enemies) updateEnemy(g, e, dt, night, obs);
@@ -1177,6 +2049,27 @@ function updateEnemy(g, e, dt, night, obs) {
   const D = ENEMIES[e.type];
   const p = g.player;
   const w = g.w;
+  if (e.type === 'mummy') return updateMummy(g, e, dt, obs);
+  // bone piles lie still until you come close (or kick them)
+  if (e.dormant) {
+    if (!g.over && (dist2(e.x, e.z, p.x, p.z) < (e.wakeR || 6) || e.hurtT > 0)) {
+      e.dormant = false;
+      e.riseT = 0.8;
+      e.alert = true;
+      fx(g, 'poof', e.x, e.z, { y: 0.2, color: 0xe6dcc0, n: 14 });
+      if (!g.boneMsgT || g.time - g.boneMsgT > 6) {
+        g.boneMsgT = g.time;
+        msg(g, 'Bones rattle and drag themselves upright…');
+      }
+    }
+    e.hurtT = Math.max(0, e.hurtT - dt);
+    return;
+  }
+  if (e.riseT > 0) {
+    e.riseT -= dt;
+    e.hurtT = Math.max(0, e.hurtT - dt);
+    return;
+  }
   e.hurtT = Math.max(0, e.hurtT - dt);
   e.cd = Math.max(0, e.cd - dt);
   e.swingT = Math.max(0, e.swingT - dt);
@@ -1204,16 +2097,24 @@ function updateEnemy(g, e, dt, night, obs) {
   const face = () => faceAt(p.x, p.z);
   const homeD = dist2(e.x, e.z, e.home.x, e.home.z);
   const fire = D.fearFire ? litFireNear(g, e.x, e.z, 9) : null;
+  // in the cave, follow the distance map around walls unless the way is clear
+  const chasePlayer = (s) => {
+    if (GRID && !(d < 12 && lineClear(GRID, e.x, e.z, p.x, p.z))) {
+      const st = flowStep(GRID, e.x, e.z);
+      if (st) return toward(st.x, st.z, s);
+    }
+    return toward(p.x, p.z, s);
+  };
   // close in on the player and attack (shared by normal enemies and raiders)
   const fightPlayer = () => {
     if (e.state !== 'chase') {
       e.state = 'chase';
       if (e.pack) for (const o of w.enemies) if (o.pack === e.pack && o !== e && o.state === 'idle') o.alert = true;
-      if (D.boss) msg(g, 'The Marauder King draws his blade!');
+      if (e.type === 'king') msg(g, 'The Marauder King draws his blade!');
     }
     e.alert = false;
     if (D.ranged) {
-      if (d > 12) toward(p.x, p.z, spd);
+      if (d > 12) chasePlayer(spd);
       else if (d < 6.5) toward(e.x - dx, e.z - dz, spd * 0.9);
       else {
         vx = (-dz / d) * spd * 0.35 * (e.id % 2 ? 1 : -1);
@@ -1223,7 +2124,7 @@ function updateEnemy(g, e, dt, night, obs) {
         e.state = 'windup';
         e.t = D.windup;
       }
-    } else if (d > D.reach) toward(p.x, p.z, spd);
+    } else if (d > D.reach) chasePlayer(spd);
     else if (e.cd <= 0 && !knocked) {
       if (D.windup === 0) strike(g, e, D, d, dx, dz, night);
       else {
@@ -1297,7 +2198,12 @@ function updateEnemy(g, e, dt, night, obs) {
     if (homeD < 3) e.returning = false;
   } else {
     const aggro = D.aggro * (night && e.type === 'scorpion' ? 1.5 : 1);
-    const engaged = !g.sleeping && !g.over && !playerSafe && (d < aggro || (e.state === 'chase' && d < aggro * 1.8) || e.alert);
+    let engaged = !g.sleeping && !g.over && !playerSafe && (d < aggro || (e.state === 'chase' && d < aggro * 1.8) || e.alert);
+    // cave creatures can't smell you through solid rock: they need a line of sight or a short way around
+    if (engaged && GRID && !e.alert && e.state !== 'chase' && !lineClear(GRID, e.x, e.z, p.x, p.z)) {
+      const fd = flowDist(GRID, e.x, e.z);
+      if (fd < 0 || fd > aggro * 1.3) engaged = false;
+    }
     if (engaged && D.leash && homeD > D.leash) {
       e.returning = true;
       e.alert = false;
@@ -1372,14 +2278,14 @@ function strike(g, e, D, d, dx, dz, night) {
   const facing = Math.abs(angDiff(Math.atan2(dx, dz), e.rot)) < 1.1;
   if (d <= D.reach + 0.45 && facing) {
     damagePlayer(g, dmg, e, D);
-    if (e.type === 'rat') {
+    if (e.type === 'rat' || e.type === 'caveRat') {
       e.kx = -(dx / (d || 1)) * 5;
       e.kz = -(dz / (d || 1)) * 5;
     }
   }
 }
 
-function damagePlayer(g, amount, src, D) {
+function damagePlayer(g, amount, src, D, quiet) {
   const p = g.player;
   if (g.over || g.god) return;
   if (p.action === 'dodge') {
@@ -1408,8 +2314,8 @@ function damagePlayer(g, amount, src, D) {
   p.health -= amt;
   p.hurtT = 0.4;
   g.shake = Math.max(g.shake, 0.35);
-  g.lastHarm = D ? `a ${D.name}` : 'an arrow';
-  msg(g, note ? `${note}-${amt}` : `${D ? 'The ' + D.name : 'An arrow'} hit you! -${amt}`);
+  g.lastHarm = D ? (D.boss ? `the ${D.name}` : `a ${D.name}`) : 'an arrow';
+  if (!quiet) msg(g, note ? `${note}-${amt}` : `${D ? 'The ' + D.name : 'An arrow'} hit you! -${amt}`);
 }
 
 function updateArrows(g, dt, obs) {
@@ -1421,10 +2327,12 @@ function updateArrows(g, dt, obs) {
     a.life -= dt;
     if (a.life <= 0) continue;
     if (inSafeZone(g, a.x, a.z)) continue; // arrows never land in the village or on your land
-    if (!a.harmless && dist2(a.x, a.z, p.x, p.z) < 0.55 && p.action !== 'dodge') {
-      damagePlayer(g, a.dmg, { x: a.x - a.vx * 0.05, z: a.z - a.vz * 0.05, arrow: true }, null);
+    if (!a.harmless && dist2(a.x, a.z, p.x, p.z) < (a.kind === 'soul' ? 0.75 : 0.55) && p.action !== 'dodge') {
+      // a shield stops arrows cold, but magic only partly
+      damagePlayer(g, a.dmg, { x: a.x - a.vx * 0.05, z: a.z - a.vz * 0.05, arrow: !a.magic }, a.magic ? { name: a.kind === 'soul' ? 'soul orb' : 'cursed bolt' } : null);
       continue;
     }
+    if (GRID && wallAt(GRID, a.x, a.z)) continue;
     if (!a.harmless && obs.some((o) => !o.pond && dist2(a.x, a.z, o.x, o.z) < o.r)) continue;
     keep.push(a);
   }
@@ -1434,12 +2342,17 @@ function updateArrows(g, dt, obs) {
 function killEnemy(g, e) {
   const D = ENEMIES[e.type];
   g.kills += 1;
-  const gold = D.gold[0] + Math.floor(rng(g) * (D.gold[1] - D.gold[0] + 1));
+  const gold = e.noLoot ? 0 : D.gold[0] + Math.floor(rng(g) * (D.gold[1] - D.gold[0] + 1));
   if (gold > 0) {
     g.gold += gold;
     fx(g, 'gold', e.x, e.z, { y: 0.5 });
   }
-  (D.drops || []).forEach(([item], i) => {
+  if (e.cursed) {
+    // the Curse of the Dead: slaying the risen gives back a little life
+    g.player.health = Math.min(100, g.player.health + 8);
+    fx(g, 'spirit', g.player.x, g.player.z, { y: 1 });
+  }
+  (e.noLoot ? [] : D.drops || []).forEach(([item], i) => {
     // drops land on reachable ground: push them out of ponds, rocks and walls
     const spot = { x: e.x + i * 0.5, z: e.z + i * 0.3 };
     collide(spot, 0.9, obstacles(g), g.w.r - 1);
@@ -1447,10 +2360,11 @@ function killEnemy(g, e) {
   });
   fx(g, 'poof', e.x, e.z, { y: 0.2 });
   const loot = gold ? ` +${gold} gold` : '';
-  if (D.boss) {
+  if (e.type === 'mummy') mummyDefeated(g, e, loot);
+  else if (D.boss) {
     msg(g, `The Marauder King falls!${loot}`);
     complete(g, 'king');
-  } else msg(g, `You defeated a ${D.name}.${loot}`);
+  } else msg(g, e.cursed ? `The cursed skeleton collapses. Its stolen life flows into you. +8 ❤️` : `You defeated a ${D.name}.${loot}`);
   if (e.camp && !D.boss) {
     const left = g.w.enemies.filter((o) => o.camp && o.hp > 0 && !ENEMIES[o.type].boss && o !== e).length;
     if (left === 0) {
@@ -1553,8 +2467,19 @@ function resolveAction(g) {
       const d = Math.hypot(dx, dz);
       if (d < T.reach + ENEMIES[e.type].radius * 0.5 && e.hp > 0 && Math.abs(angDiff(Math.atan2(dx, dz), p.rot)) < T.arc) {
         const D = ENEMIES[e.type];
-        e.hp -= T.dmg;
+        if (e.inv) {
+          // the Guardian's spirit shield turns the blow aside
+          hit = true;
+          fx(g, 'spirit', e.x, e.z, { y: 1.4 + (e.hy || 0) });
+          if (!g.shieldMsgT || g.time - g.shieldMsgT > 3) {
+            g.shieldMsgT = g.time;
+            msg(g, g.w.boss && g.w.boss.glow ? 'His spirit shield holds! Smash the glowing pillars.' : 'Your blow glances off him!');
+          }
+          continue;
+        }
+        e.hp -= T.dmg * (e.mode === 'stun' ? 1.5 : 1);
         e.hurtT = 0.3;
+        if (e.type === 'mummy' && e.phase === 1 && e.hp <= D.hp * 0.5) startMummyTransition(g, e);
         const kb = (D.boss ? 1.5 : D.human ? 5 : 9) * T.kb;
         e.kx = (dx / (d || 1)) * kb;
         e.kz = (dz / (d || 1)) * kb;
@@ -1562,12 +2487,30 @@ function resolveAction(g) {
           e.state = 'chase';
           e.siege = null;
           e.cd = T.stagger ? 1.0 : 0.6; // a solid hit interrupts small enemies; a mace staggers anyone
-          if (D.boss) msg(g, 'Your mace staggers the King!');
+          if (D.boss) msg(g, e.type === 'king' ? 'Your mace staggers the King!' : 'Your mace breaks his spell!');
         }
         if (e.state === 'idle' && !D.passive) e.state = 'chase';
         hit = true;
         fx(g, 'hit', e.x, e.z, { y: D.human ? 1.1 : 0.3 });
         if (e.hp <= 0) killEnemy(g, e);
+      }
+    }
+    // the glowing pillars in the Guardian's chamber can be smashed while his shield is up
+    const B = g.region === 'cave' && g.w.boss;
+    if (B && B.glow) {
+      for (const pl of B.pillars) {
+        if (!pl.alive) continue;
+        const dx = pl.x - p.x;
+        const dz = pl.z - p.z;
+        const d = Math.hypot(dx, dz);
+        if (d < T.reach + 0.85 && Math.abs(angDiff(Math.atan2(dx, dz), p.rot)) < Math.max(T.arc, 0.9)) {
+          pl.hp -= T.dmg;
+          pl.hitT = 0.3;
+          hit = true;
+          fx(g, 'chips', pl.x - dx / (d || 1) * 0.7, pl.z - dz / (d || 1) * 0.7, { y: 1.4, color: 0xcdb48a });
+          fx(g, 'spirit', pl.x, pl.z, { y: 2.2 });
+          if (pl.hp <= 0) breakPillar(g, pl);
+        }
       }
     }
     if (hit) {
@@ -1613,7 +2556,16 @@ export function getUseTarget(g) {
   for (const n of w.npcs) {
     if (n.type === 'villager' && dist2(n.x, n.z, p.x, p.z) < 2.2) c.push({ s: score(n.x, n.z) + 1.2, kind: 'villager', npc: n, label: 'Talk', x: n.x, z: n.z, y: 2.3 }); // flavor NPCs never steal USE from the chief or merchant
   }
-  if (g.region === 'desert') {
+  if (w.doors) {
+    for (const dr of w.doors) {
+      if (dr.open || dist2(dr.x, dr.z, p.x, p.z) > dr.half + 1.5) continue;
+      const base = { s: score(dr.x, dr.z) - 0.2, kind: 'door', door: dr, x: dr.x, z: dr.z, y: 4.6 };
+      if (dr.kind === 'boss') c.push({ ...base, label: `Sealed door (${leversPulled(w)}/2 levers)`, enabled: false, why: 'The great door will not budge. Two lever slots are carved beside it: somewhere in the cave, two levers must be pulled.' });
+      else if (dr.kind === 'shortcutA') c.push({ ...base, label: g.inv.goldenKey > 0 ? 'Unlock with the golden key' : 'Locked door', enabled: g.inv.goldenKey > 0, why: 'A scarab-shaped keyhole. Whoever rules this cave must hold the key.' });
+      else c.push({ ...base, label: 'Sealed door', enabled: false, why: 'Sealed tight. It must open from the other side.' });
+    }
+  }
+  if (w.decor.ponds) {
     for (const pd of w.decor.ponds) {
       const d = dist2(pd.x, pd.z, p.x, p.z);
       if (d < pd.r + 2.0) {
@@ -1623,6 +2575,8 @@ export function getUseTarget(g) {
         c.push({ s: Math.max(0, d - pd.r) + 1.1, kind: 'water', label: fill ? 'Fill waterskin' : 'Drink', x: ex, z: ez, y: 0.9 });
       }
     }
+  }
+  if (g.region === 'desert') {
     const well = w.decor.well;
     if (dist2(well.x, well.z, p.x, p.z) < 2.3) c.push({ s: score(well.x, well.z), kind: 'well', label: 'Look into the well', x: well.x, z: well.z, y: 2.6 });
     const sign = w.decor.plotSign;
@@ -1632,12 +2586,24 @@ export function getUseTarget(g) {
     if (!n.alive) continue;
     const d = dist2(n.x, n.z, p.x, p.z);
     const big = CHOPPABLE[n.type];
+    if (n.type === 'cavemouth' || n.type === 'caveexit') {
+      if (d > 3.2) continue;
+      const inbound = n.type === 'cavemouth';
+      c.push({ s: score(n.x, n.z) - 0.5, kind: 'trail', node: n, label: inbound ? 'Enter the cave' : 'Leave the cave', enabled: true, x: n.x, z: n.z, y: inbound ? 4.6 : 2.6 });
+      continue;
+    }
     if (n.type === 'trail') {
       if (d > 2.8) continue;
       const toDesert = n.dest === 'desert';
       const ok = !toDesert || (g.level >= 2 && !!g.tools.pickaxe);
       const why = g.level < 2 ? 'Survive your first night before heading out.' : 'Craft a stone pickaxe first. The desert is full of ore.';
       c.push({ s: score(n.x, n.z) - 0.5, kind: 'trail', node: n, label: toDesert ? 'Travel to the desert' : 'Return to the forest', enabled: ok, why, x: n.x, z: n.z, y: 2.4 });
+      continue;
+    }
+    if (n.type === 'lever' || n.type === 'chest' || n.type === 'stairs') {
+      if (d > 2.3 || n.pulled || n.opened) continue;
+      const label = n.type === 'lever' ? 'Pull the lever' : n.type === 'chest' ? 'Open the chest' : 'Look down the stairs';
+      c.push({ s: score(n.x, n.z) - 0.3, kind: n.type, node: n, label, x: n.x, z: n.z, y: n.type === 'lever' ? 1.9 : 1.4 });
       continue;
     }
     if (d > (big ? 2.3 * n.scale : MINEABLE[n.type] ? 2.0 : 1.9)) continue;
@@ -1812,6 +2778,24 @@ export function doUse(g) {
     case 'trail':
       g.pendingTravel = n.dest;
       break;
+    case 'lever':
+      startAction(p, 'pickup', 0.6, n.x, n.z);
+      pullLever(g, n);
+      break;
+    case 'chest':
+      startAction(p, 'pickup', 0.6, n.x, n.z);
+      openChest(g, n);
+      break;
+    case 'stairs':
+      msg(g, 'Stone steps spiral down into the dark, choked with rubble. Whatever lies below will have to wait.');
+      break;
+    case 'door':
+      if (t.door.kind === 'shortcutA') {
+        g.inv.goldenKey -= 1;
+        g.w.doors.filter((dr) => dr.kind !== 'boss').forEach((dr) => openDoor(g, dr));
+        msg(g, 'The golden key turns. Both shortcut doors grind open: the way back to the entrance is clear.');
+      }
+      break;
     default:
       break;
   }
@@ -1862,6 +2846,7 @@ export function doDodge(g) {
     p.dodgeZ = -Math.cos(p.rot);
   }
   startAction(p, 'dodge', 0.42);
+  p.rootT = 0; // a dodge roll tears you free of grasping hands
   p.dodgeCd = 0.75;
   p.energy = Math.max(0, p.energy - 3);
   fx(g, 'dust', p.x, p.z);
@@ -1906,6 +2891,7 @@ export function buildSpot(g, id) {
   const B = BUILDS[id];
   const x = p.x + Math.sin(p.rot) * B.ahead;
   const z = p.z + Math.cos(p.rot) * B.ahead;
+  if (g.region === 'cave') return { x, z, why: 'There is no room to build down here.' };
   if (g.region === 'desert') {
     if (inPlot(x, z, B.size * 0.6)) {
       if (!g.plotOwned) return { x, z, why: `This land is for sale. Buy it from Chief Soloman for ${PLOT.price} gold.` };
@@ -2118,6 +3104,13 @@ export function campRemaining(g) {
 
 export function respawnInVillage(g) {
   const p = g.player;
+  if (g.region === 'cave') {
+    // villagers drag you out of the cave; the Guardian settles back into his sarcophagus
+    resetMummy(g);
+    travel(g, 'desert');
+    g.msgs = [];
+  }
+  p.rootT = 0;
   const lost = Math.floor(g.gold / 2);
   g.gold -= lost;
   const chief = g.w.npcs.find((n) => n.type === 'chief');
@@ -2137,8 +3130,7 @@ export function respawnInVillage(g) {
       e.returning = true;
     }
   }
-  msg(g, `Villagers carried you back to the village.${lost ? ` You lost ${lost} gold.` : ''}`);
-}
+  msg(g, `Villagers carried you back to the village.${lost ? ` You lost ${lost} gold.` : ''}`);}
 
 /* =====================================================================
    PLAYTEST — jump straight to any part of the game
@@ -2150,6 +3142,8 @@ export const SCENARIOS = [
   { id: 'smithing', title: 'Desert · smithing ready', desc: 'You own the plot with a hut, fire, furnace and anvil. Hammer, 20 copper + 20 tin, 46 bronze bars.' },
   { id: 'raid', title: 'Desert · raid tonight', desc: 'A hut out in the open dunes, sword and shield, just before sunset. The raiders arrive at nightfall.' },
   { id: 'boss', title: 'Desert · storm the camp', desc: 'Full bronze armor, mace, sword, dagger and shield at the camp gate. Cooked meat in the bag.' },
+  { id: 'cave', title: 'Cave · just inside', desc: 'Full bronze gear in the cave entrance hall. Find the two levers and the two treasure chests.' },
+  { id: 'caveBoss', title: 'Cave · Mummy Guardian', desc: 'Both levers pulled, both cave weapons found, full bronze gear. Standing outside the open boss door.' },
 ];
 const L1_DONE = ['gather', 'fiber', 'axe', 'club', 'chop', 'shelter', 'fire', 'cook', 'sleep'];
 function giveAll(g, items) {
@@ -2163,7 +3157,7 @@ function placeBuild(g, type, x, z, rot) {
   return b;
 }
 function clearAround(g, x, z, r) {
-  g.w.nodes = g.w.nodes.filter((n) => n.type === 'trail' || dist2(n.x, n.z, x, z) > r);
+  g.w.nodes = g.w.nodes.filter((n) => PORTAL[n.type] || dist2(n.x, n.z, x, z) > r);
   g.w.enemies = g.w.enemies.filter((e) => ENEMIES[e.type].human || dist2(e.x, e.z, x, z) > r + 10);
 }
 function toDesert(g) {
@@ -2199,6 +3193,35 @@ export function applyScenario(g, id) {
   };
   if (id === 'desertArrive') {
     msg(g, '🧪 Playtest: just arrived in the desert. Follow the star to the village.');
+    return;
+  }
+  if (id === 'cave' || id === 'caveBoss') {
+    ['village', 'chief'].forEach((k) => (g.done[k] = true));
+    g.quest = 'active';
+    ['dagger', 'sword', 'mace', 'shield', 'helmet', 'platelegs', 'platebody'].forEach((k) => gainTool(g, k));
+    g.equip = 'sword';
+    giveAll(g, { cookedMeat: 8 });
+    g.gold = 100;
+    travel(g, 'cave');
+    g.msgs = [];
+    if (id === 'cave') {
+      msg(g, '🧪 Playtest: inside the cave. Pull both levers to open the boss door.');
+      return;
+    }
+    const w = g.w;
+    w.nodes.forEach((n) => {
+      if (n.type === 'lever') n.pulled = true;
+      if (n.type === 'chest') {
+        n.opened = true;
+        gainTool(g, n.item);
+      }
+    });
+    openDoor(g, w.doors.find((d) => d.kind === 'boss'));
+    g.equip = 'mace';
+    w.enemies = w.enemies.filter((e) => e.type === 'mummy' || dist2(e.x, e.z, -6.25, -11) > 16);
+    standAt(-6.25, -10.5, -6.25, -20);
+    g.fx = [];
+    msg(g, '🧪 Playtest: the great door is open. The Mummy Guardian waits to the north.');
     return;
   }
   ['village', 'chief'].forEach((k) => (g.done[k] = true));
@@ -2272,6 +3295,9 @@ export const WARPS = [
   { id: 'camp', label: 'Camp gate', region: 'desert' },
   { id: 'desertTrail', label: 'Desert trail', region: 'desert' },
   { id: 'forestTrail', label: 'Forest trail', region: 'forest' },
+  { id: 'caveMouth', label: 'Cave mouth', region: 'desert' },
+  { id: 'caveIn', label: 'Cave entrance hall', region: 'cave' },
+  { id: 'caveBoss', label: 'Cave boss door', region: 'cave' },
 ];
 export function cheat(g, id) {
   const p = g.player;
@@ -2294,11 +3320,14 @@ export function cheat(g, id) {
 export function warp(g, id) {
   const W = WARPS.find((x) => x.id === id);
   if (!W) return;
-  if (W.region === 'desert' && !g.worlds.desert && g.level < 2) toDesert(g);
+  if (W.region !== 'forest' && !g.worlds.desert && g.level < 2) toDesert(g);
   if (g.region !== W.region) travel(g, W.region);
   const p = g.player;
   const V = DESERT.village;
   const spots = {
+    caveMouth: [CAVE_MOUTH.x + Math.sin(CAVE_MOUTH.rot) * 4, CAVE_MOUTH.z + Math.cos(CAVE_MOUTH.rot) * 4],
+    caveIn: [-6.25, 31],
+    caveBoss: [-6.25, -10.5],
     village: [V.x + 4, V.z + 4],
     plot: [PLOT.x, PLOT.z - PLOT.half + 2],
     oasis: [DESERT.oasis.x - DESERT.oasis.r - 2.5, DESERT.oasis.z],
@@ -2422,6 +3451,26 @@ function makeTool(kind) {
     g.add(mesh(geo('hmHandle', () => new THREE.CylinderGeometry(0.028, 0.032, 0.5, 6).rotateX(Math.PI / 2)), M(0x9a6534), 0, 0, 0.16));
     g.add(mesh(geo('hmHead', () => new THREE.BoxGeometry(0.11, 0.24, 0.12)), M(COL.stoneDark), 0, -0.02, 0.42));
     g.add(mesh(geo('lash', () => new THREE.BoxGeometry(0.075, 0.07, 0.07)), M(0xc9b16a), 0, 0.02, 0.36));
+  } else if (kind === 'khopesh') {
+    g.add(mesh(geo('khGrip', () => new THREE.CylinderGeometry(0.03, 0.03, 0.18, 6).rotateX(Math.PI / 2)), M(0x2a1a12), 0, 0, 0.02));
+    g.add(mesh(geo('khGuard', () => new THREE.BoxGeometry(0.06, 0.16, 0.05)), M(COL.gold), 0, 0, 0.12));
+    g.add(mesh(geo('khShank', () => new THREE.BoxGeometry(0.03, 0.06, 0.36)), M(COL.bronze, { emissive: 0x2a1404 }), 0, 0, 0.31));
+    // the hooked sickle blade curls forward and down from the end of the shank
+    const cy = -0.16;
+    const cz = 0.5;
+    const R = 0.18;
+    for (let k = 0; k < 6; k++) {
+      const th = ((95 - k * 40 - 20) * Math.PI) / 180;
+      const b = mesh(geo('khBlade', () => new THREE.BoxGeometry(0.026, 0.085, 0.15)), M(COL.gold, { emissive: 0x3a2800 }), 0, cy + R * Math.sin(th), cz + R * Math.cos(th), false);
+      b.rotation.x = Math.PI / 2 - th;
+      g.add(b);
+    }
+  } else if (kind === 'spear') {
+    g.add(mesh(geo('spShaft', () => new THREE.CylinderGeometry(0.026, 0.03, 1.7, 6).rotateX(Math.PI / 2)), M(0x6a4a2a), 0, 0, 0.42));
+    g.add(mesh(geo('spButt', () => new THREE.ConeGeometry(0.035, 0.1, 5).rotateX(-Math.PI / 2)), M(COL.bronze), 0, 0, -0.47));
+    g.add(mesh(geo('spCollar', () => new THREE.CylinderGeometry(0.045, 0.045, 0.08, 6).rotateX(Math.PI / 2)), M(COL.gold), 0, 0, 1.28));
+    g.add(mesh(geo('spScarab', () => new THREE.SphereGeometry(0.06, 6, 4).scale(1, 0.6, 1.3)), M(0x1fa89a, { emissive: 0x0a3a34 }), 0, 0.05, 1.34, false));
+    g.add(mesh(geo('spHead', () => new THREE.ConeGeometry(0.07, 0.34, 4).rotateX(Math.PI / 2)), M(COL.bronze, { emissive: 0x2a1404 }), 0, 0, 1.5));
   } else if (kind === 'staff') {
     g.add(mesh(geo('staff', () => new THREE.CylinderGeometry(0.03, 0.035, 1.8, 6).rotateX(Math.PI / 2)), M(0x7a5232), 0, 0, 0.35));
     g.add(mesh(geo('staffGem', () => new THREE.IcosahedronGeometry(0.07, 0)), M(0x3fb6c9, { emissive: 0x0b3a44 }), 0, 0, 1.28));
@@ -2464,6 +3513,8 @@ const HUMAN_STYLES = {
   villager0: { skin: 0xc08a60, shirt: 0xd8c9a8, shirtDark: 0xa89878, pants: 0xb8a888, boot: 0x5a4030, hair: 0x2a1a10, wrap: 0xeeeeee },
   villager1: { skin: 0xa87650, shirt: 0xb85a3a, shirtDark: 0x8a3a22, pants: 0xc8b898, boot: 0x5a4030, hair: 0x1a1008, wrap: 0xd8c9a8 },
   villager2: { skin: 0xd09a70, shirt: 0x6a8a5a, shirtDark: 0x4a6a3a, pants: 0xd8c9a8, boot: 0x5a4030, hair: 0x3a2214 },
+  skeleton: { skin: 0xe6dcc0, shirt: 0xd4caae, shirtDark: 0x9a8e70, pants: 0x4a3e30, boot: 0x2e261c, hair: 0xe6dcc0, eyes: 0xff4a2a, stripes: 0x5a5040 },
+  mummy: { skin: 0xcbbd96, shirt: 0xd6c9a2, shirtDark: COL.gold, pants: 0xc4b68e, boot: 0x9a8a62, hair: 0x1f3f7a, wrap: 0x1f3f7a, cape: 0x1f3f7a, eyes: 0x6aff8a, stripes: 0xa89a74, scale: 1.35 },
 };
 
 function makeHuman(styleName, toolKinds = []) {
@@ -2518,8 +3569,11 @@ function makeHuman(styleName, toolKinds = []) {
       head.add(mesh(geo('crownSpike', () => new THREE.ConeGeometry(0.03, 0.1, 4)), M(COL.gold), Math.sin(a) * 0.15, 0.41, Math.cos(a) * 0.15, false));
     }
   }
-  head.add(mesh(geo('eye', () => new THREE.BoxGeometry(0.04, 0.045, 0.02)), M(0x1d1d1f), 0.065, 0.17, 0.137, false));
-  head.add(mesh(geo('eye', () => new THREE.BoxGeometry(0.04, 0.045, 0.02)), M(0x1d1d1f), -0.065, 0.17, 0.137, false));
+  const eyeM = S.eyes ? M(S.eyes, { emissive: S.eyes }) : M(0x1d1d1f);
+  head.add(mesh(geo('eye', () => new THREE.BoxGeometry(0.04, 0.045, 0.02)), eyeM, 0.065, 0.17, 0.137, false));
+  head.add(mesh(geo('eye', () => new THREE.BoxGeometry(0.04, 0.045, 0.02)), eyeM, -0.065, 0.17, 0.137, false));
+  // ribs on a skeleton, bandage wraps on a mummy
+  if (S.stripes) for (let i = 0; i < 4; i++) torso.add(mesh(geo('stripe', () => new THREE.BoxGeometry(0.4, 0.035, 0.02)), M(S.stripes), 0, 0.14 + i * 0.11, 0.135, false));
   if (S.detail) {
     if (!S.wrap) head.add(mesh(geo('hairFringe', () => new THREE.BoxGeometry(0.2, 0.05, 0.05)), M(S.hair), -0.04, 0.26, 0.13));
     head.add(mesh(geo('ear', () => new THREE.BoxGeometry(0.04, 0.07, 0.05)), M(S.skin), 0.145, 0.15, 0));
@@ -2607,11 +3661,13 @@ function makeHuman(styleName, toolKinds = []) {
   return { root, hips, torso, head, shL: L.sh, shR: R.sh, elL: L.el, elR: R.el, hipL: LL.hp, hipR: RL.hp, knL: LL.kn, knR: RL.kn, tools, armor, pose: {} };
 }
 
-function makeRat() {
+function makeRat(opts = {}) {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
-  const fur = new THREE.MeshLambertMaterial({ color: 0x7d7670 });
+  const base = opts.fur || 0x7d7670;
+  const fur = new THREE.MeshLambertMaterial({ color: base });
+  if (opts.scale) root.scale.setScalar(opts.scale);
   body.add(mesh(geo('ratBody', () => new THREE.SphereGeometry(0.2, 7, 5).scale(1, 0.78, 1.7)), fur, 0, 0.2, 0));
   body.add(mesh(geo('ratHead', () => new THREE.ConeGeometry(0.13, 0.32, 6).rotateX(Math.PI / 2)), fur, 0, 0.21, 0.42));
   body.add(mesh(geo('ratNose', () => new THREE.SphereGeometry(0.03, 5, 4)), M(0xe8a0a0), 0, 0.2, 0.58, false));
@@ -2640,14 +3696,16 @@ function makeRat() {
     body.add(l);
     legs.push(l);
   });
-  return { kind: 'rat', root, body, tail, legs, skin: fur, base: 0x7d7670, eyeMat };
+  return { kind: 'rat', root, body, tail, legs, skin: fur, base, eyeMat };
 }
 
-function makeScorpion() {
+function makeScorpion(opts = {}) {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
-  const shell = new THREE.MeshLambertMaterial({ color: 0x8a5a2a });
+  const base = opts.shell || 0x8a5a2a;
+  const shell = new THREE.MeshLambertMaterial({ color: base });
+  if (opts.scale) root.scale.setScalar(opts.scale);
   body.add(mesh(geo('scBody', () => new THREE.SphereGeometry(0.26, 7, 5).scale(1, 0.45, 1.4)), shell, 0, 0.2, 0));
   body.add(mesh(geo('scHead', () => new THREE.BoxGeometry(0.28, 0.12, 0.2)), shell, 0, 0.2, 0.38));
   const claws = [];
@@ -2686,9 +3744,9 @@ function makeScorpion() {
     parent = seg;
     pos = [0, 0.12, 0.02];
   }
-  const sting = mesh(geo('scSting', () => new THREE.ConeGeometry(0.04, 0.16, 4).rotateX(Math.PI / 2)), M(0x2a1a0a), 0, 0.02, 0.1, false);
+  const sting = mesh(geo('scSting', () => new THREE.ConeGeometry(0.04, 0.16, 4).rotateX(Math.PI / 2)), opts.sting ? M(opts.sting, { emissive: opts.sting }) : M(0x2a1a0a), 0, 0.02, 0.1, false);
   tail[4].add(sting);
-  return { kind: 'scorpion', root, body, tail, legs, claws, skin: shell, base: 0x8a5a2a };
+  return { kind: 'scorpion', root, body, tail, legs, claws, skin: shell, base };
 }
 
 function makeSnake() {
@@ -2733,7 +3791,9 @@ function makeEnemyRig(type) {
   if (type === 'scorpion') return makeScorpion();
   if (type === 'snake') return makeSnake();
   if (type === 'hare') return makeHare();
-  const tool = type === 'archer' ? 'bow' : type === 'king' ? 'greatsword' : 'scimitar';
+  if (type === 'caveRat') return makeRat({ fur: 0x4a4440, scale: 1.35 });
+  if (type === 'caveScorpion') return makeScorpion({ shell: 0x3a2c24, sting: 0x6aff8a, scale: 1.3 });
+  const tool = type === 'archer' ? 'bow' : type === 'king' ? 'greatsword' : type === 'mummy' ? 'staff' : 'scimitar';
   const rig = makeHuman(type, [tool]);
   rig.kind = 'human';
   rig.mainTool = tool;
@@ -2872,7 +3932,20 @@ function makeNode(n) {
       g.add(mesh(geo('mDot', () => new THREE.SphereGeometry(0.025, 4, 3)), M(0xffffff), -0.05, 0.3, -0.06, false));
       break;
     case 'drop':
-      if (n.item === 'leather') {
+      if (n.item === 'goldenKey') {
+        const key = new THREE.Group();
+        const gold = M(COL.gold, { emissive: 0x6a4a00 });
+        key.add(mesh(geo('keyBow', () => new THREE.TorusGeometry(0.12, 0.035, 5, 10)), gold, 0, 0, -0.22, false));
+        key.add(mesh(geo('keyShaft', () => new THREE.BoxGeometry(0.04, 0.04, 0.42)), gold, 0, 0, 0.05, false));
+        key.add(mesh(geo('keyBit', () => new THREE.BoxGeometry(0.04, 0.12, 0.08)), gold, 0, -0.06, 0.2, false));
+        key.position.y = 0.45;
+        g.add(key);
+        g.add(mesh(geo('keyGlow', () => new THREE.CylinderGeometry(0.5, 0.5, 0.02, 12)), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }), 0, 0.02, 0, false));
+        g.userData.update = (nn, t) => {
+          key.rotation.y = t * 2;
+          key.position.y = 0.45 + Math.sin(t * 3) * 0.08;
+        };
+      } else if (n.item === 'leather') {
         const hide = mesh(geo('hide', () => new THREE.BoxGeometry(0.5, 0.03, 0.4)), M(0x8a5a32), 0, 0.03, 0);
         hide.rotation.y = 0.4;
         g.add(hide);
@@ -2887,6 +3960,93 @@ function makeNode(n) {
       g.add(sign);
       g.add(mesh(geo('signTip', () => new THREE.ConeGeometry(0.2, 0.3, 3).rotateX(Math.PI / 2)), M(0xb88a52), 0, 1.6, 0.9));
       for (let i = 0; i < 6; i++) g.add(mesh(geo('pathStone', () => new THREE.CylinderGeometry(0.3, 0.32, 0.06, 6)), M(0x9a8a6a), (i % 2) * 0.4 - 0.2, 0.03, 1.5 + i * 1.1, false));
+      break;
+    }
+    case 'cavemouth': {
+      // a rock mass at the foot of the cliff with a dark opening facing out (+z)
+      const rock = M(0xa8653f);
+      const rock2 = M(0x8f5636);
+      const blob = (key, x, y, z, sx, sy, sz, mat, rx = 0) => {
+        const m = mesh(geo(key, () => new THREE.DodecahedronGeometry(1, 0)), mat, x, y, z);
+        m.scale.set(sx, sy, sz);
+        m.rotation.set(rx, rx * 2, 0);
+        g.add(m);
+      };
+      blob('cmA', 0, 2.4, -4.6, 6.2, 5.2, 4.4, rock);
+      blob('cmA', -3.8, 1.8, -1.2, 2.0, 3.0, 2.2, rock2, 0.4);
+      blob('cmA', 3.8, 1.6, -1.2, 2.0, 2.8, 2.2, rock2, 1.1);
+      blob('cmA', 0, 4.6, -1.6, 4.0, 1.4, 2.0, rock, 0.2);
+      blob('cmA', 6.5, 1.2, -3.4, 2.4, 2.4, 2.4, rock2, 2.0);
+      blob('cmA', -6.2, 1.4, -3.2, 2.6, 2.8, 2.2, rock, 0.8);
+      const dark = new THREE.MeshBasicMaterial({ color: 0x050302 });
+      g.add(mesh(geo('cmHole', () => new THREE.BoxGeometry(3.8, 3.6, 3.0)), dark, 0, 1.8, -2.0, false));
+      g.add(mesh(geo('cmFloor', () => new THREE.BoxGeometry(3.6, 0.1, 2.4)), M(0x6a4a30), 0, 0.03, -0.2, false));
+      const bone = M(0xe6dcc0);
+      [[1.6, 1.4, 0.4], [-1.2, 1.9, 2.2], [0.6, 2.4, 1.1]].forEach(([x, z, r]) => {
+        const b = mesh(geo('cmBone', () => new THREE.CylinderGeometry(0.04, 0.04, 0.6, 5).rotateZ(Math.PI / 2)), bone, x, 0.06, z, false);
+        b.rotation.y = r;
+        g.add(b);
+      });
+      g.add(mesh(geo('cmSkull', () => new THREE.SphereGeometry(0.17, 7, 5).scale(1, 0.9, 1.15)), bone, 1.1, 0.15, 2.0, false));
+      break;
+    }
+    case 'caveexit': {
+      // daylight spilling down the passage from the desert above (+z here points back into the cave)
+      const sand = M(0xc9a46b);
+      for (let i = 0; i < 4; i++) g.add(mesh(geo('exStep', () => new THREE.BoxGeometry(3.4, 0.25, 0.7)), sand, 0, 0.12 + i * 0.25, -0.6 - i * 0.7));
+      const beam = new THREE.Mesh(
+        geo('exBeam', () => new THREE.CylinderGeometry(1.3, 2.8, 8, 12, 1, true)),
+        new THREE.MeshBasicMaterial({ color: 0xffe6b0, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+      );
+      beam.position.set(0, 3.4, -1.6);
+      beam.rotation.x = -0.4;
+      g.add(beam);
+      break;
+    }
+    case 'lever': {
+      g.add(mesh(geo('lvBase', () => new THREE.BoxGeometry(0.7, 0.5, 0.5)), M(0x8a7a5a), 0, 0.25, 0));
+      g.add(mesh(geo('lvSlot', () => new THREE.BoxGeometry(0.12, 0.04, 0.42)), M(0x1a140c), 0, 0.51, 0, false));
+      const arm = new THREE.Group();
+      arm.position.y = 0.5;
+      arm.add(mesh(geo('lvStick', () => new THREE.CylinderGeometry(0.04, 0.05, 1.0, 6).translate(0, 0.5, 0)), M(0x5a4a3a)));
+      const knob = mesh(geo('lvKnob', () => new THREE.SphereGeometry(0.1, 7, 5)), M(COL.gold, { emissive: 0x3a2800 }), 0, 1.0, 0);
+      arm.add(knob);
+      arm.rotation.x = n.pulled ? 0.75 : -0.75;
+      g.add(arm);
+      g.userData.update = (nn, t, dt) => {
+        arm.rotation.x = lerp(arm.rotation.x, nn.pulled ? 0.75 : -0.75, 1 - Math.exp(-dt * 6));
+      };
+      break;
+    }
+    case 'chest': {
+      const wood = M(0x6a4422);
+      const band = M(COL.gold, { emissive: 0x2a1c00 });
+      g.add(mesh(geo('chBody', () => new THREE.BoxGeometry(1.1, 0.6, 0.7)), wood, 0, 0.3, 0));
+      [-0.4, 0.4].forEach((x) => g.add(mesh(geo('chBand', () => new THREE.BoxGeometry(0.08, 0.62, 0.72)), band, x, 0.31, 0)));
+      const glow = mesh(geo('chGold', () => new THREE.BoxGeometry(0.9, 0.12, 0.5)), M(COL.gold, { emissive: 0x7a5a00 }), 0, 0.56, 0, false);
+      glow.visible = !!n.opened;
+      g.add(glow);
+      const lid = new THREE.Group();
+      lid.position.set(0, 0.6, -0.35);
+      lid.add(mesh(geo('chLid', () => new THREE.BoxGeometry(1.12, 0.22, 0.72)), wood, 0, 0.11, 0.35));
+      [-0.4, 0.4].forEach((x) => lid.add(mesh(geo('chLidBand', () => new THREE.BoxGeometry(0.08, 0.24, 0.74)), band, x, 0.11, 0.35, false)));
+      lid.add(mesh(geo('chLock', () => new THREE.BoxGeometry(0.16, 0.18, 0.06)), band, 0, 0.0, 0.72, false));
+      lid.rotation.x = n.opened ? -1.9 : 0;
+      g.add(lid);
+      g.userData.update = (nn, t, dt) => {
+        lid.rotation.x = lerp(lid.rotation.x, nn.opened ? -1.9 : 0, 1 - Math.exp(-dt * 5));
+        glow.visible = !!nn.opened;
+      };
+      break;
+    }
+    case 'stairs': {
+      // steps spiral down into a dark stairwell (local -z), choked with rubble
+      for (let i = 0; i < 5; i++) g.add(mesh(geo('stStep', () => new THREE.BoxGeometry(2.4, 0.3, 0.6)), M(i % 2 ? 0x7a6a4c : 0x6e5e42), 0, -0.15 - i * 0.32, -0.75 - i * 0.55));
+      [[0, 0.1, -1.5, 0.7], [-0.7, 0, -1.1, 0.5], [0.8, 0.05, -1.9, 0.55], [0.2, 0.35, -2.1, 0.6], [-0.5, -0.1, -2.5, 0.5]].forEach(([x, y, z, r], i) => {
+        const m = mesh(geo('rub' + i, () => new THREE.DodecahedronGeometry(r, 0)), M(0x7a6a58), x, y, z);
+        m.rotation.set(i, i * 2, 0);
+        g.add(m);
+      });
       break;
     }
     default:
@@ -3127,6 +4287,12 @@ const PALETTES = {
     hemiSky: [0xeaf4ff, 0x3a4a80], hemiGround: [0xc9a46b, 0x1a140c], hemiI: [1.25, 0.38],
     sun: 0xfff0d2, sunI: 3.1, fog: [45, 170, 14, 62],
   },
+  // underground: no sky, no sun, just warm rock and the dark beyond the torchlight
+  cave: {
+    top: [0x050403, 0x050403], horizon: [0x0b0806, 0x0b0806], dusk: [0x050403, 0x0b0806],
+    hemiSky: [0x9a8670, 0x9a8670], hemiGround: [0x2a2018, 0x2a2018], hemiI: [0.62, 0.62],
+    sun: 0x000000, sunI: 0, fog: [14, 52, 14, 52],
+  },
 };
 
 function createEngine(gl) {
@@ -3200,7 +4366,7 @@ function createEngine(gl) {
   scene.add(hemi, ambient, sun, sun.target);
 
   // things that persist across regions: the hero, particles, target marker
-  const player = makeHuman('player', ['axe', 'club', 'pickaxe', 'hammer', 'dagger', 'sword', 'mace', 'shield']);
+  const player = makeHuman('player', ['axe', 'club', 'pickaxe', 'hammer', 'dagger', 'sword', 'mace', 'khopesh', 'spear', 'shield']);
   scene.add(player.root);
   const marker = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.34, 4).rotateX(Math.PI), new THREE.MeshBasicMaterial({ color: 0xffd166, fog: false }));
   scene.add(marker);
@@ -3266,6 +4432,15 @@ function buildWorld(E, g) {
   E.buildObjs = new Map();
   E.plotFlag = null;
   E.campFires = [];
+  E.doorObjs = new Map();
+  E.spikeObjs = new Map();
+  E.pillarObjs = new Map();
+  E.hazardObjs = new Map();
+  E.torches = [];
+  E.caveLights = [];
+  E.playerLight = null;
+  E.spirit = null;
+  E.sun.castShadow = g.region !== 'cave'; // no sun underground
   const w = g.w;
   const tmp = new THREE.Object3D();
   const instanced = (geom, mat, list, place, cast = false) => {
@@ -3323,6 +4498,8 @@ function buildWorld(E, g) {
     instanced(flat(new THREE.CylinderGeometry(0.2, 0.32, 2.5, 5).translate(0, 1.25, 0)), M(COL.bark), w.decor.farTrees, placeFar);
     instanced(flat(new THREE.ConeGeometry(1.7, 4.6, 6).translate(0, 4.2, 0)), M(0x2d5f37), pines, placeFar, true);
     instanced(new THREE.IcosahedronGeometry(1.7, 0).translate(0, 3.6, 0), M(0x3a7531), broads, placeFar, true);
+  } else if (g.region === 'cave') {
+    buildCave(E, g, world, instanced);
   } else {
     const sand = [C(0xe2c48a), C(0xdab879), C(0xe6cc98), C(0xd8b475)];
     const O = DESERT.oasis;
@@ -3457,6 +4634,445 @@ function buildWorld(E, g) {
   E.built = true;
 }
 
+/* ---------- the Desert Cave ---------- */
+const FX_MATS = {};
+function glowMat(color, opacity = 0.85) {
+  const key = color + ':' + opacity;
+  if (!FX_MATS[key]) {
+    FX_MATS[key] = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false });
+    FX_MATS[key].userData.shared = true;
+  }
+  return FX_MATS[key];
+}
+function makeTorch() {
+  const g = new THREE.Group();
+  const iron = M(0x3a3430);
+  g.add(mesh(geo('tcPole', () => new THREE.CylinderGeometry(0.05, 0.07, 1.9, 6).translate(0, 0.95, 0)), iron));
+  g.add(mesh(geo('tcFoot', () => new THREE.CylinderGeometry(0.25, 0.3, 0.12, 6)), iron, 0, 0.06, 0));
+  g.add(mesh(geo('tcBowl', () => new THREE.CylinderGeometry(0.22, 0.1, 0.22, 7)), M(0x5a4a3a), 0, 1.98, 0));
+  const flames = new THREE.Group();
+  flames.position.y = 2.05;
+  [[0xff5a00, 0.18, 0.62, 0.85], [0xffa21a, 0.12, 0.46, 0.9], [0xfff0a0, 0.07, 0.3, 0.95]].forEach(([c, r, h, o], i) =>
+    flames.add(new THREE.Mesh(geo('tcFlame' + i, () => new THREE.ConeGeometry(r, h, 6).translate(0, h / 2, 0)), glowMat(c, o))),
+  );
+  g.add(flames);
+  return { g, flames };
+}
+function makePillar() {
+  const g = new THREE.Group();
+  const glyph = new THREE.MeshLambertMaterial({ color: 0xc9a24a, emissive: 0x1a1000 });
+  const stone = M(0xcdb48a);
+  const dark = M(0xb89a6a);
+  const column = new THREE.Group();
+  column.add(mesh(geo('plBase', () => new THREE.BoxGeometry(1.7, 0.4, 1.7)), dark, 0, 0.2, 0));
+  column.add(mesh(geo('plShaft', () => new THREE.CylinderGeometry(0.62, 0.7, 4.6, 8).translate(0, 2.7, 0)), stone));
+  [1.2, 2.6, 4.0].forEach((y) => column.add(mesh(geo('plBand', () => new THREE.CylinderGeometry(0.73, 0.73, 0.18, 8)), glyph, 0, y, 0, false)));
+  for (let k = 0; k < 4; k++) {
+    const a = (k * Math.PI) / 2 + Math.PI / 8;
+    const s = mesh(geo('plGlyph', () => new THREE.BoxGeometry(0.16, 2.4, 0.05)), glyph, Math.sin(a) * 0.66, 2.6, Math.cos(a) * 0.66, false);
+    s.rotation.y = a;
+    column.add(s);
+  }
+  column.add(mesh(geo('plCap', () => new THREE.BoxGeometry(1.6, 0.4, 1.6)), dark, 0, 5.2, 0));
+  const stump = new THREE.Group();
+  stump.add(mesh(geo('plBase', () => new THREE.BoxGeometry(1.7, 0.4, 1.7)), dark, 0, 0.2, 0));
+  stump.add(mesh(geo('plStub', () => new THREE.CylinderGeometry(0.5, 0.7, 1.1, 8).translate(0, 0.9, 0)), stone));
+  [[0.9, 0.2, 0.6, 0.4], [-0.8, 0.2, -0.5, 0.45], [0.3, 0.15, -1.1, 0.35], [-0.6, 0.15, 0.9, 0.3]].forEach(([x, y, z, r], i) => {
+    const m = mesh(geo('plRub' + i, () => new THREE.DodecahedronGeometry(r, 0)), stone, x, y, z);
+    m.rotation.set(i, i * 1.7, 0);
+    stump.add(m);
+  });
+  stump.visible = false;
+  g.add(column, stump);
+  return { g, column, stump, glyph };
+}
+function makeCaveDoor(dr) {
+  const g = new THREE.Group();
+  const len = dr.half * 2 + 0.8;
+  const slab = new THREE.Group();
+  slab.add(mesh(new THREE.BoxGeometry(len, 4.4, 0.9), M(dr.kind === 'boss' ? 0x9a8458 : 0xa89060), 0, 2.2, 0));
+  [0.5, 3.9].forEach((y) => slab.add(mesh(new THREE.BoxGeometry(len - 0.4, 0.14, 0.98), M(0x7a6440), 0, y, 0, false)));
+  const gold = M(COL.gold, { emissive: 0x3a2800 });
+  if (dr.kind === 'boss') {
+    // an ankh, with the two lever slots beside it
+    slab.add(mesh(geo('ankhBar', () => new THREE.BoxGeometry(0.22, 1.5, 1.0)), gold, 0, 1.75, 0, false));
+    slab.add(mesh(geo('ankhArm', () => new THREE.BoxGeometry(1.0, 0.2, 1.0)), gold, 0, 2.55, 0, false));
+    slab.add(mesh(geo('ankhLoop', () => new THREE.TorusGeometry(0.32, 0.09, 6, 12)), gold, 0, 3.05, 0.48, false));
+    slab.add(mesh(geo('ankhLoop', () => new THREE.TorusGeometry(0.32, 0.09, 6, 12)), gold, 0, 3.05, -0.48, false));
+    [-1, 1].forEach((s) => slab.add(mesh(geo('doorSlot', () => new THREE.BoxGeometry(0.16, 0.6, 1.0)), M(0x1a140c), s * 1.5, 2.0, 0, false)));
+  } else {
+    // a golden scarab around the keyhole
+    [0.48, -0.48].forEach((z) => {
+      slab.add(mesh(geo('scarabBody', () => new THREE.SphereGeometry(0.42, 8, 6).scale(1, 1.3, 0.3)), gold, 0, 2.2, z, false));
+      [-1, 1].forEach((s) => {
+        const wing = mesh(geo('scarabWing', () => new THREE.BoxGeometry(0.7, 0.3, 0.06)), gold, s * 0.6, 2.4, z, false);
+        wing.rotation.z = s * 0.4;
+        slab.add(wing);
+      });
+    });
+  }
+  g.add(slab);
+  g.position.set(dr.x, 0, dr.z);
+  g.rotation.y = dr.axis === 'z' ? Math.PI / 2 : 0;
+  slab.position.y = dr.open ? -4.4 : 0;
+  return { g, slab, y: slab.position.y };
+}
+function makeSpikeStrip(s) {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.BoxGeometry(s.w, 0.06, s.len), M(0x3e3832), 0, 0.03, 0, false));
+  const spikes = new THREE.Group();
+  const rows = Math.floor(s.len / 0.7);
+  const steel = M(0xb9bec6);
+  for (let i = 0; i < rows; i++) for (const x of [-0.4, 0.4]) spikes.add(mesh(geo('spike', () => new THREE.ConeGeometry(0.09, 0.6, 5).translate(0, 0.3, 0)), steel, x, 0.04, -s.len / 2 + 0.35 + i * 0.7, false));
+  spikes.position.y = -0.7;
+  g.add(spikes);
+  g.position.set(s.x, 0, s.z);
+  return { g, spikes };
+}
+function makeSpirit() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0x6aff9a, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false });
+  g.add(new THREE.Mesh(new THREE.ConeGeometry(0.75, 2.4, 10, 1, true).translate(0, -0.4, 0), mat));
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8), mat).translateY(1.05));
+  [-1, 1].forEach((s) => {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.1, 0.16).translate(0, 0.5, 0), mat);
+    arm.position.set(s * 0.45, 0.55, 0);
+    arm.rotation.z = -s * 0.7;
+    g.add(arm);
+  });
+  const eyes = glowMat(0xeaffea, 0.95);
+  [-1, 1].forEach((s) => g.add(new THREE.Mesh(geo('spEye', () => new THREE.SphereGeometry(0.06, 6, 4)), eyes).translateX(s * 0.12).translateY(1.1).translateZ(0.28)));
+  g.visible = false;
+  return { g, mat };
+}
+function makeHazard(h) {
+  const g = new THREE.Group();
+  if (h.kind === 'sand') {
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(h.r, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x1e1424, transparent: true, opacity: 0, depthWrite: false }));
+    const swirlMat = new THREE.MeshBasicMaterial({ color: 0x3aa860, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false });
+    const swirl = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const arc = new THREE.Mesh(new THREE.RingGeometry(h.r * (0.25 + i * 0.24), h.r * (0.33 + i * 0.24), 16, 1, i * 2, 2.6).rotateX(-Math.PI / 2), swirlMat);
+      arc.position.y = 0.02;
+      swirl.add(arc);
+    }
+    const ring = new THREE.Mesh(new THREE.RingGeometry(h.r - 0.14, h.r, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x5aff8a, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ring.position.y = 0.03;
+    g.add(disc, swirl, ring);
+    return { g, disc, swirl, ring, swirlMat };
+  }
+  const ring = new THREE.Mesh(new THREE.RingGeometry(h.r - 0.15, h.r, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x8affb0, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+  ring.position.y = 0.03;
+  const handMat = new THREE.MeshBasicMaterial({ color: 0x6aff9a, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false });
+  const hands = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const hand = new THREE.Group();
+    hand.add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.7, 0.1).translate(0, 0.35, 0), handMat));
+    for (let f = 0; f < 4; f++) hand.add(new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.3, 0.05).translate(0, 0.15, 0), handMat).translateX(-0.08 + f * 0.055).translateY(0.7));
+    hand.position.set(Math.cos(a) * 0.55, 0, Math.sin(a) * 0.55);
+    hand.rotation.set(Math.sin(a) * 0.4, -a, Math.cos(a) * 0.4);
+    hands.add(hand);
+  }
+  hands.visible = false;
+  g.add(ring, hands);
+  return { g, ring, hands, handMat };
+}
+function makeBonePile() {
+  const g = new THREE.Group();
+  const bone = M(0xe6dcc0);
+  g.add(mesh(geo('bpSkull', () => new THREE.SphereGeometry(0.16, 7, 5).scale(1, 0.9, 1.1)), bone, 0.12, 0.14, 0.18));
+  [[0, 0.05, 0, 0.75, 0.4], [0.2, 0.06, -0.2, 0.6, 1.8], [-0.25, 0.05, 0.05, 0.55, 2.7], [0.05, 0.11, -0.05, 0.5, 1.0], [-0.1, 0.05, -0.3, 0.45, 0.2]].forEach(([x, y, z, l, r]) => {
+    const b = mesh(geo('bpBone', () => new THREE.CylinderGeometry(0.035, 0.035, 1, 5).rotateZ(Math.PI / 2)), bone, x, y, z, false);
+    b.scale.x = l;
+    b.rotation.y = r;
+    g.add(b);
+  });
+  return g;
+}
+
+function buildCave(E, g, world, instanced) {
+  const w = g.w;
+  const G = w.grid;
+  const R = w.rooms;
+  const C = (hex) => new THREE.Color(hex);
+  // ---- floor (one merged mesh) and water ----
+  const fpos = [];
+  const fcol = [];
+  const wpos = [];
+  const quad = (arr, x, z, y) => arr.push(x, y, z, x, y, z + 1, x + 1, y, z + 1, x, y, z, x + 1, y, z + 1, x + 1, y, z);
+  const dirt = [C(0x5e4c3a), C(0x66533f), C(0x584636), C(0x6c5842)];
+  const tile = [C(0x8a7a5a), C(0x7a6a4c)];
+  const c = new THREE.Color();
+  const inRoom = (k, x, z, s = 1) => ((x - R[k].x) / R[k].rx) ** 2 + ((z - R[k].z) / R[k].rz) ** 2 < s * s;
+  for (let r = 0; r < G.rows; r++) {
+    for (let col = 0; col < G.cols; col++) {
+      const i = r * G.cols + col;
+      const t = G.t[i];
+      const x = G.x0 + col;
+      const z = G.z0 + r;
+      if (t === WATER) {
+        quad(wpos, x, z, -0.3);
+        continue;
+      }
+      if (t !== FLOOR && t !== DOOR) continue;
+      const n = hash01(x + 0.5, z + 0.5);
+      if (inRoom('boss', x, z, 1.15)) c.copy(tile[(col + r) % 2]).lerp(C(0x5a4c36), n * 0.25);
+      else {
+        c.copy(dirt[Math.floor(n * 4)]);
+        c.lerp(C(0xc9a46b), smooth(26, 38, z) * 0.85); // sand blown in from the desert
+        if (inRoom('grotto', x, z, 1.1)) c.lerp(C(0x3e5038), 0.35); // damp near the pool
+      }
+      quad(fpos, x, z, 0);
+      for (let k = 0; k < 6; k++) fcol.push(c.r, c.g, c.b);
+    }
+  }
+  const fg = new THREE.BufferGeometry();
+  fg.setAttribute('position', new THREE.Float32BufferAttribute(fpos, 3));
+  fg.setAttribute('color', new THREE.Float32BufferAttribute(fcol, 3));
+  fg.computeVertexNormals();
+  const floor = new THREE.Mesh(fg, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  floor.receiveShadow = true;
+  world.add(floor);
+  const wg = new THREE.BufferGeometry();
+  wg.setAttribute('position', new THREE.Float32BufferAttribute(wpos, 3));
+  wg.computeVertexNormals();
+  const water = new THREE.Mesh(wg, new THREE.MeshLambertMaterial({ color: 0x2a6a90, emissive: 0x08202e, transparent: true, opacity: 0.9 }));
+  world.add(water);
+  E.caveWater = water;
+  // the bottomless dark under the pits, and around everything
+  const voidPlane = new THREE.Mesh(new THREE.PlaneGeometry(260, 260).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x050403 }));
+  voidPlane.position.y = -4.5;
+  world.add(voidPlane);
+
+  // ---- rock walls: one instanced mesh of lumpy boulders along every open edge ----
+  const walls = [];
+  for (let i = 0; i < G.t.length; i++) if (G.t[i] === ROCK && G.wallH[i] > 0) walls.push(i);
+  const rockGeo = flat(new THREE.DodecahedronGeometry(1, 0));
+  const rockMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const wim = new THREE.InstancedMesh(rockGeo, rockMat, walls.length);
+  const tmp = new THREE.Object3D();
+  const rockCols = [C(0x6e5a46), C(0x5e4c3a), C(0x7a644c), C(0x54443a), C(0x82684e)];
+  walls.forEach((i, k) => {
+    const x = G.x0 + (i % G.cols) + 0.5;
+    const z = G.z0 + ((i / G.cols) | 0) + 0.5;
+    const h = G.wallH[i];
+    const n = hash01(x, z);
+    const n2 = hash01(z, x);
+    tmp.position.set(x + (n - 0.5) * 0.3, h * 0.42, z + (n2 - 0.5) * 0.3);
+    tmp.rotation.set((n - 0.5) * 0.4, n2 * 6.28, (n2 - 0.5) * 0.4);
+    tmp.scale.set(0.95 + n * 0.3, h * 0.6, 0.95 + n2 * 0.3);
+    tmp.updateMatrix();
+    wim.setMatrixAt(k, tmp.matrix);
+    wim.setColorAt(k, rockCols[Math.floor(n2 * rockCols.length)]);
+  });
+  if (wim.instanceColor) wim.instanceColor.needsUpdate = true;
+  wim.receiveShadow = true;
+  world.add(wim);
+
+  // ---- bridges ----
+  w.bridges.forEach((b) => {
+    const grp = new THREE.Group();
+    const n = Math.ceil(b.len / 0.45);
+    for (let i = 0; i < n; i++) {
+      const pl = mesh(geo('plank', () => new THREE.BoxGeometry(1, 0.1, 0.38)), M(i % 2 ? 0x7a5432 : 0x6a4628), 0, -0.04, -b.len / 2 + 0.22 + i * 0.45);
+      pl.scale.x = b.wd + 0.3;
+      pl.rotation.y = Math.sin(i * 7) * 0.04;
+      grp.add(pl);
+    }
+    [-1, 1].forEach((s) => {
+      grp.add(mesh(new THREE.BoxGeometry(0.04, 0.04, b.len + 0.4), M(0xc9b07a), s * (b.wd / 2 + 0.12), 0.75, 0, false));
+      [-1, 1].forEach((e) => grp.add(mesh(geo('brPost', () => new THREE.CylinderGeometry(0.06, 0.07, 1.0, 5).translate(0, 0.5, 0)), M(0x5a3a22), s * (b.wd / 2 + 0.12), -0.1, e * (b.len / 2 + 0.1))));
+    });
+    grp.position.set(b.x, 0, b.z);
+    grp.rotation.y = b.axis === 'x' ? Math.PI / 2 : 0;
+    world.add(grp);
+  });
+
+  // ---- doors, spikes, pillars, torches ----
+  w.doors.forEach((dr) => {
+    const o = makeCaveDoor(dr);
+    world.add(o.g);
+    E.doorObjs.set(dr.id, o);
+  });
+  w.spikes.forEach((s) => {
+    const o = makeSpikeStrip(s);
+    world.add(o.g);
+    E.spikeObjs.set(s.id, o);
+  });
+  w.boss.pillars.forEach((pl) => {
+    const o = makePillar();
+    o.g.position.set(pl.x, 0, pl.z);
+    world.add(o.g);
+    E.pillarObjs.set(pl.id, o);
+  });
+  w.decor.torches.forEach((td, i) => {
+    const o = makeTorch();
+    o.g.position.set(td.x, 0, td.z);
+    world.add(o.g);
+    E.torches.push({ data: td, flames: o.flames, lit: true, fl: 1, ph: i * 1.7 });
+  });
+
+  // ---- the sarcophagus at the back of the boss chamber ----
+  const sc = w.decor.sarc;
+  const sarc = new THREE.Group();
+  sarc.add(mesh(geo('sarcBase', () => new THREE.BoxGeometry(1.5, 0.9, 2.7)), M(0xb89a6a), 0, 0.45, 0));
+  sarc.add(mesh(geo('sarcTrim', () => new THREE.BoxGeometry(1.56, 0.12, 2.76)), M(COL.gold, { emissive: 0x2a1c00 }), 0, 0.85, 0, false));
+  const lidM = mesh(geo('sarcLid', () => new THREE.BoxGeometry(1.4, 0.25, 2.6)), M(0x2a4a8a), 1.0, 0.55, 0.2);
+  lidM.rotation.z = -0.9;
+  sarc.add(lidM);
+  sarc.add(mesh(geo('sarcFace', () => new THREE.BoxGeometry(0.6, 0.06, 0.7)), M(COL.gold, { emissive: 0x3a2800 }), 1.1, 0.75, 1.0, false));
+  sarc.position.set(sc.x, 0, sc.z);
+  world.add(sarc);
+
+  // ---- little things: bones, glowing mushrooms, rocks in the pool ----
+  instanced(geo('bpBone', () => new THREE.CylinderGeometry(0.035, 0.035, 1, 5).rotateZ(Math.PI / 2)), M(0xe6dcc0), w.decor.bones, (o, b) => {
+    o.position.set(b.x, 0.04, b.z);
+    o.rotation.set(0, b.rot, 0);
+    o.scale.set(b.s, 1, 1);
+  });
+  instanced(geo('bpSkull', () => new THREE.SphereGeometry(0.16, 7, 5).scale(1, 0.9, 1.1)), M(0xe6dcc0), w.decor.bones.filter((b, i) => i % 3 === 0), (o, b) => {
+    o.position.set(b.x + 0.3, 0.12, b.z - 0.2);
+    o.rotation.set(0, b.rot * 2, 0.3);
+  });
+  instanced(geo('shStem', () => new THREE.CylinderGeometry(0.04, 0.05, 0.25, 5).translate(0, 0.12, 0)), M(0xe8e2d0), w.decor.shrooms, (o, s) => {
+    o.position.set(s.x, 0, s.z);
+    o.scale.setScalar(s.s);
+  });
+  instanced(geo('shCap', () => new THREE.SphereGeometry(0.14, 7, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.6, 1)), new THREE.MeshBasicMaterial({ color: 0x6af0ff }), w.decor.shrooms, (o, s) => {
+    o.position.set(s.x, 0.24 * s.s, s.z);
+    o.rotation.set(0, s.rot, 0);
+    o.scale.setScalar(s.s);
+  });
+  instanced(new THREE.DodecahedronGeometry(1, 0), M(0x6a5a48), w.rocks, (o, rk) => {
+    o.position.set(rk.x, -0.1, rk.z);
+    o.rotation.set(rk.rot, rk.rot * 2, 0);
+    o.scale.set(rk.r * 1.1, rk.r * 0.7, rk.r);
+  });
+
+  // ---- light: a small glow around the player, plus a pool of lights handed to the nearest torches ----
+  const f = LEGACY_THREE ? 0.3 : 1;
+  E.playerLight = new THREE.PointLight(0xffc890, 9 * f, 10, 1.6);
+  world.add(E.playerLight);
+  for (let i = 0; i < 5; i++) {
+    const L = new THREE.PointLight(0xff9a3c, 0, 15, 1.6);
+    world.add(L);
+    E.caveLights.push(L);
+  }
+  const sp = makeSpirit();
+  E.spirit = sp.g;
+  E.spiritMat = sp.mat;
+  world.add(sp.g);
+}
+
+function syncCave(E, g, dt, t) {
+  const w = g.w;
+  const p = g.player;
+  const B = w.boss;
+  // doors sink into the floor once they open
+  for (const dr of w.doors) {
+    const o = E.doorObjs.get(dr.id);
+    if (!o) continue;
+    o.y = lerp(o.y, dr.open ? -4.5 : 0, 1 - Math.exp(-dt * 1.4));
+    o.slab.position.y = o.y + (dr.open && o.y > -4.3 ? Math.sin(t * 40) * 0.03 : 0);
+  }
+  // spikes: hidden, then twitching (the warning), then up
+  for (const s of w.spikes) {
+    const o = E.spikeObjs.get(s.id);
+    const st = spikeState(s, g.time);
+    const want = st === 'up' ? 0 : st === 'warn' ? -0.45 + Math.abs(Math.sin(t * 30)) * 0.05 : -0.7;
+    o.spikes.position.y = lerp(o.spikes.position.y, want, 1 - Math.exp(-dt * (st === 'up' ? 40 : 10)));
+  }
+  // pillars glow green while they power his shield
+  for (const pl of B.pillars) {
+    const o = E.pillarObjs.get(pl.id);
+    o.column.visible = pl.alive;
+    o.stump.visible = !pl.alive;
+    const lit = B.glow && pl.alive;
+    o.glyph.color.setHex(lit ? 0x7affa0 : 0xc9a24a);
+    o.glyph.emissive.setHex(lit ? (Math.sin(t * 6 + pl.id) > 0 ? 0x2ac85a : 0x1a8a3a) : 0x1a1000);
+    o.column.position.x = pl.hitT > 0 ? Math.sin(t * 70) * 0.06 : 0;
+  }
+  // torches (the boss chamber's go dark when the spirit rises)
+  const out = B.torchesOut && !B.done;
+  E.torches.forEach((tr) => {
+    tr.lit = !(tr.data.boss && out);
+    tr.flames.visible = tr.lit;
+    tr.fl = 1 + 0.15 * Math.sin(t * 13 + tr.ph) + 0.08 * Math.sin(t * 27 + tr.ph);
+    tr.flames.scale.set(1, tr.fl, 1);
+  });
+  // the spirit hovering over the Guardian
+  const mum = w.enemies.find((e) => e.type === 'mummy');
+  E.spirit.visible = !!(mum && mum.spirit);
+  if (E.spirit.visible) {
+    E.spirit.position.set(mum.x, (mum.hy || 0) + 3.3 + Math.sin(t * 2) * 0.15, mum.z);
+    E.spirit.rotation.y = mum.rot;
+    E.spiritMat.opacity = 0.4 + Math.sin(t * 5) * 0.08;
+  }
+  // the Guardian's curses on the floor
+  const liveH = new Set();
+  for (const h of w.hazards) {
+    liveH.add(h.id);
+    let o = E.hazardObjs.get(h.id);
+    if (!o) {
+      o = makeHazard(h);
+      E.world.add(o.g);
+      E.hazardObjs.set(h.id, o);
+    }
+    o.g.position.set(h.x, 0.04, h.z);
+    if (h.kind === 'sand') {
+      const active = h.age > h.warn;
+      const fade = clamp((h.warn + h.life + 0.6 - h.age) / 0.6, 0, 1);
+      o.disc.material.opacity = (active ? 0.85 : 0.2 + 0.12 * Math.sin(t * 20)) * fade;
+      o.swirlMat.opacity = (active ? 0.7 : 0.25) * fade;
+      o.swirl.rotation.y += dt * (active ? 2.5 : 0.8);
+      o.ring.material.opacity = (active ? 0.5 : 0.6 + 0.4 * Math.sin(t * 18)) * fade;
+    } else {
+      const k = clamp(h.age / h.warn, 0, 1);
+      o.ring.scale.setScalar(1.6 - 0.6 * k);
+      o.ring.material.opacity = h.fired ? 0 : 0.5 + 0.4 * Math.sin(t * 25);
+      o.hands.visible = !!h.fired;
+      if (h.fired) {
+        const a = h.age - h.warn;
+        o.hands.position.y = Math.min(1, a * 6) * 0.6 - 0.5;
+        o.handMat.opacity = clamp(1 - a / 0.8, 0, 1) * 0.8;
+      }
+    }
+  }
+  for (const [id, o] of E.hazardObjs) {
+    if (liveH.has(id)) continue;
+    E.world.remove(o.g);
+    o.g.traverse((m) => {
+      if (m.geometry && !m.geometry.userData.shared) m.geometry.dispose();
+      if (m.material && !m.material.userData.shared) m.material.dispose();
+    });
+    E.hazardObjs.delete(id);
+  }
+  if (E.caveWater) E.caveWater.material.emissive.setHex(Math.sin(t * 1.3) > 0.6 ? 0x0c2a3c : 0x08202e);
+  // hand the light pool to whatever glows nearest the player
+  const f = LEGACY_THREE ? 0.3 : 1;
+  const src = [];
+  E.torches.forEach((tr) => tr.lit && src.push({ x: tr.data.x, y: 2.4, z: tr.data.z, c: 0xff9a3c, i: 34 * tr.fl, r: 15 }));
+  if (B.glow) B.pillars.forEach((pl) => pl.alive && src.push({ x: pl.x, y: 2.8, z: pl.z, c: 0x5aff8a, i: 26, r: 14 }));
+  if (E.spirit.visible) src.push({ x: E.spirit.position.x, y: E.spirit.position.y, z: E.spirit.position.z, c: 0x6affa0, i: 40, r: 18 });
+  const ex = w.nodes.find((n) => n.type === 'caveexit');
+  if (ex) src.push({ x: ex.x, y: 3, z: ex.z + 1, c: 0xffe6b0, i: 45, r: 16 });
+  for (const s of src) s.d = dist2(s.x, s.z, p.x, p.z);
+  src.sort((a, b) => a.d - b.d);
+  E.caveLights.forEach((L, i) => {
+    const s = src[i];
+    if (!s || s.d > 30) {
+      L.intensity = 0;
+      return;
+    }
+    L.position.set(s.x, s.y, s.z);
+    L.color.setHex(s.c);
+    L.intensity = s.i * f;
+    L.distance = s.r;
+  });
+  E.playerLight.position.set(p.x, 2.4, p.z);
+}
+
 function emit(E, type, x, y, z, color, n) {
   const cfg = {
     chips: { n: 10, c: color || 0xd9b27c, sp: 3.2, up: 3.5, life: 0.9, s: 1, grav: 12 },
@@ -3468,6 +5084,7 @@ function emit(E, type, x, y, z, color, n) {
     slam: { n: 24, c: 0xcaa878, sp: 5, up: 1.6, life: 0.9, s: 1.8, grav: 3 },
     gold: { n: 10, c: 0xffd23a, sp: 1.2, up: 4, life: 0.9, s: 0.9, grav: 7 },
     splash: { n: 14, c: 0x8fd0f0, sp: 1.4, up: 2.6, life: 0.6, s: 0.8, grav: 8 },
+    spirit: { n: n || 14, c: color || 0x6aff9a, sp: 1.1, up: 2.6, life: 0.9, s: 0.9, grav: -0.8 },
   }[type];
   if (!cfg) return;
   let made = 0;
@@ -3484,7 +5101,7 @@ function emit(E, type, x, y, z, color, n) {
     p.grav = cfg.grav;
     p.spin = (Math.random() - 0.5) * 12;
     p.m.material.color.setHex(cfg.c);
-    p.m.material.emissive.setHex(['sparks', 'hit', 'gold'].includes(type) ? cfg.c : 0x000000);
+    p.m.material.emissive.setHex(['sparks', 'hit', 'gold', 'spirit'].includes(type) ? cfg.c : 0x000000);
     p.m.scale.set(cfg.s, type === 'leaves' ? cfg.s * 0.25 : cfg.s, cfg.s);
     if (++made >= cfg.n) break;
   }
@@ -3496,7 +5113,7 @@ function lerpAngle(a, b, t) {
 
 function syncEngine(E, g, dt, mode, target) {
   if (E.region !== g.region || !E.world) buildWorld(E, g);
-  REGION = g.region;
+  setRegion(g);
   const { scene, camera, sun, hemi, skyUni } = E;
   const w = g.w;
   const t = g.time;
@@ -3515,7 +5132,8 @@ function syncEngine(E, g, dt, mode, target) {
   // ---- sky, light, fog ----
   const P = PALETTES[g.region];
   const tod = mode === 'title' ? 0.13 : g.tod;
-  const d = darkness(tod);
+  const cave = g.region === 'cave';
+  const d = cave ? 1 : darkness(tod);
   const dusk = clamp(1 - Math.abs(tod - 0.62) / 0.08, 0, 1) + clamp(1 - Math.abs(tod - 0.035) / 0.04, 0, 1) * 0.6;
   const mix2 = ([a, b]) => new THREE.Color(a).lerp(new THREE.Color(b), d);
   skyUni.top.value.copy(mix2(P.top).lerp(new THREE.Color(P.dusk[0]), dusk * 0.45));
@@ -3551,6 +5169,13 @@ function syncEngine(E, g, dt, mode, target) {
   E.stars.material.opacity = clamp((d - 0.4) / 0.6, 0, 1);
   E.stars.position.copy(camera.position);
   E.sky.position.copy(camera.position);
+  if (cave) {
+    sun.intensity = 0;
+    E.moonDisc.material.opacity = 0;
+    E.stars.material.opacity = 0;
+    E.ambient.intensity = 0.1;
+    E.renderer.toneMappingExposure = 1.15;
+  }
   const near = (x, z, r) => Math.abs(x - p.x) < r && Math.abs(z - p.z) < r;
 
   // ---- resource nodes ----
@@ -3619,6 +5244,7 @@ function syncEngine(E, g, dt, mode, target) {
         o.group.userData.tall.rotation.z = Math.sin(t * 1.5 + n.x) * 0.05;
       }
       if (n.type === 'bush') o.group.userData.berries.forEach((b, i) => (b.visible = n.alive && i < n.uses * 2));
+      if (o.group.userData.update) o.group.userData.update(n, t, dt);
     }
   }
   for (const [id, o] of E.nodeObjs) {
@@ -3662,6 +5288,7 @@ function syncEngine(E, g, dt, mode, target) {
     }
   }
   if (E.plotFlag) E.plotFlag.material.color.setHex(g.plotOwned ? 0x3a9a4a : 0xc0392b);
+  if (cave) syncCave(E, g, dt, t);
   for (const f of E.campFires) animateFire(f, true, 120, t, d, dt);
   if (w.decor.ponds) w.decor.ponds.forEach((pd, i) => pd.mesh && (pd.mesh.material.emissive.setHex(Math.sin(t * 1.3 + i) > 0.6 ? 0x0e3450 : 0x0a2a40)));
 
@@ -3673,16 +5300,26 @@ function syncEngine(E, g, dt, mode, target) {
     if (!o) {
       o = makeEnemyRig(e.type);
       E.world.add(o.root);
+      if (e.dormant) {
+        // a heap of bones, until it stands up
+        o.bones = makeBonePile();
+        o.bones.position.set(e.x, heightAt(e.x, e.z), e.z);
+        o.bones.rotation.y = e.rot;
+        E.world.add(o.bones);
+      }
       E.enemyObjs.set(e.id, o);
     }
-    o.root.visible = near(e.x, e.z, 70);
+    if (o.bones) o.bones.visible = !!e.dormant;
+    o.root.visible = near(e.x, e.z, 70) && !e.dormant;
     if (!o.root.visible) continue;
-    o.root.position.set(e.x, heightAt(e.x, e.z), e.z);
+    const rise = e.riseT > 0 ? 1.7 * (e.riseT / 0.8) : 0;
+    o.root.position.set(e.x, heightAt(e.x, e.z) + (e.hy || 0) - rise, e.z);
     o.root.rotation.y = e.rot;
     const D = ENEMIES[e.type];
     if (o.kind === 'human') {
-      const action = e.state === 'windup' ? (D.ranged ? 'draw' : 'windup') : e.swingT > 0 ? (D.ranged ? 'shoot' : 'attack') : null;
-      const q = e.state === 'windup' ? 1 - e.t / D.windup : 1 - e.swingT / (D.boss ? 0.5 : 0.35);
+      const kneel = e.pose === 'kneel';
+      const action = kneel ? 'pickup' : e.state === 'windup' ? (D.ranged ? 'draw' : 'windup') : e.swingT > 0 ? (D.ranged ? 'shoot' : 'attack') : null;
+      const q = kneel ? 0.5 : e.state === 'windup' ? 1 - e.t / (e.tMax || D.windup) : 1 - e.swingT / (D.boss ? 0.5 : 0.35);
       poseHuman(o, { moving: e.moving, speed: e.speedNow, walk: e.walk, action, q, hurt: e.hurtT > 0 ? e.hurtT / 0.3 : 0, bow: D.ranged }, dt, t);
       continue;
     }
@@ -3717,25 +5354,33 @@ function syncEngine(E, g, dt, mode, target) {
   for (const [id, o] of E.enemyObjs) {
     if (!live.has(id)) {
       E.world.remove(o.root);
+      if (o.bones) E.world.remove(o.bones);
       E.enemyObjs.delete(id);
     }
   }
 
-  // ---- arrows ----
+  // ---- arrows, cursed bolts and soul orbs ----
   const liveA = new Set();
   for (const a of w.arrows) {
     liveA.add(a.id);
     let m = E.arrowObjs.get(a.id);
     if (!m) {
       m = new THREE.Group();
-      m.add(mesh(geo('arrowShaft', () => new THREE.CylinderGeometry(0.015, 0.015, 0.75, 4).rotateX(Math.PI / 2)), M(0x8a6a42), 0, 0, 0, false));
-      m.add(mesh(geo('arrowHead', () => new THREE.ConeGeometry(0.035, 0.1, 4).rotateX(Math.PI / 2)), M(0x555555), 0, 0, 0.42, false));
-      m.add(mesh(geo('arrowFletch', () => new THREE.BoxGeometry(0.08, 0.005, 0.12)), M(0xe8e0d0), 0, 0, -0.32, false));
+      if (a.kind) {
+        const soul = a.kind === 'soul';
+        m.add(new THREE.Mesh(geo(soul ? 'orbSoul' : 'orbBolt', () => new THREE.SphereGeometry(soul ? 0.24 : 0.17, 8, 6)), glowMat(soul ? 0xb0ffe0 : 0x9affb8, 0.95)));
+        m.add(new THREE.Mesh(geo(soul ? 'haloSoul' : 'haloBolt', () => new THREE.SphereGeometry(soul ? 0.48 : 0.34, 8, 6)), glowMat(0x3aff7a, 0.3)));
+      } else {
+        m.add(mesh(geo('arrowShaft', () => new THREE.CylinderGeometry(0.015, 0.015, 0.75, 4).rotateX(Math.PI / 2)), M(0x8a6a42), 0, 0, 0, false));
+        m.add(mesh(geo('arrowHead', () => new THREE.ConeGeometry(0.035, 0.1, 4).rotateX(Math.PI / 2)), M(0x555555), 0, 0, 0.42, false));
+        m.add(mesh(geo('arrowFletch', () => new THREE.BoxGeometry(0.08, 0.005, 0.12)), M(0xe8e0d0), 0, 0, -0.32, false));
+      }
       E.world.add(m);
       E.arrowObjs.set(a.id, m);
     }
-    m.position.set(a.x, heightAt(a.x, a.z) + 1.25, a.z);
+    m.position.set(a.x, heightAt(a.x, a.z) + (a.y || 1.25), a.z);
     m.rotation.y = Math.atan2(a.vx, a.vz);
+    if (a.kind) m.scale.setScalar(1 + Math.sin(t * 20 + a.id) * 0.12);
   }
   for (const [id, m] of E.arrowObjs) {
     if (!liveA.has(id)) {
@@ -3817,6 +5462,7 @@ function syncEngine(E, g, dt, mode, target) {
       if (Math.abs(angDiff(behind, Cm.yaw)) < 2.3) Cm.yaw = lerpAngle(Cm.yaw, behind, k(0.9));
     }
     want = new THREE.Vector3(p.x, heightAt(p.x, p.z) + 1.45, p.z);
+    if (cave) Cm.pitch = Math.max(Cm.pitch, 0.62); // look down over the cave walls
   }
   Cm.target.lerp(want, mode === 'title' ? 1 : k(9));
   let dist = Cm.dist;
@@ -3833,6 +5479,19 @@ function syncEngine(E, g, dt, mode, target) {
     };
     for (const n of w.nodes) if (CHOPPABLE[n.type] && n.alive) block(n.x - Cm.target.x, n.z - Cm.target.z, 0.55 * n.scale);
     for (const o of w.staticObs) if (o.big) block(o.x - Cm.target.x, o.z - Cm.target.z, o.r + 0.3);
+    if (GRID) {
+      // keep the camera out of the rock: stop short of any wall taller than the camera line,
+      // and tilt up over the walls when they crowd in
+      for (let s = 0.8; s < dist; s += 0.35) {
+        const i = cellIdx(GRID, Cm.target.x + dirX * s, Cm.target.z + dirZ * s);
+        const h = i < 0 ? 99 : GRID.wallH[i];
+        if (h > Cm.target.y + dirY * s - 0.4) {
+          dist = Math.min(dist, s - 0.45);
+          break;
+        }
+      }
+      if (dist < Cm.dist * 0.75) Cm.pitch = lerp(Cm.pitch, 1.1, k(3));
+    }
   }
   dist = Math.max(1.6, dist);
   const cx = Cm.target.x + dirX * dist;
@@ -3987,7 +5646,7 @@ function animatePlayer(E, g, dt, mode) {
   R.root.visible = mode !== 'title';
   if (mode === 'title') return;
   const showTool = p.action === 'chop' ? 'axe' : p.action === 'mine' ? 'pickaxe' : p.action === 'smith' ? 'hammer' : weapon(g);
-  for (const key of ['axe', 'club', 'pickaxe', 'hammer', 'dagger', 'sword', 'mace']) R.tools[key].visible = key === showTool && !g.sleeping;
+  for (const key of ['axe', 'club', 'pickaxe', 'hammer', 'dagger', 'sword', 'mace', 'khopesh', 'spear']) R.tools[key].visible = key === showTool && !g.sleeping;
   for (const k of Object.keys(R.armor)) R.armor[k].forEach((m) => (m.visible = !!g.tools[k]));
   R.tools.shield.visible = !!g.tools.shield && !g.sleeping;
   const q = p.action ? 1 - p.actionT / p.actionDur : 0;
@@ -4464,6 +6123,32 @@ function Minimap({ g, big, size, onToggle }) {
   if (g.region === 'forest') {
     w.nodes.forEach((n) => n.type === 'tree' && n.alive && marks.push(dot('t' + n.id, n.x, n.z, big ? 5 : 3, '#1f4a22')));
     w.rocks.forEach((r, i) => marks.push(dot('r' + i, r.x, r.z, big ? 5 : 3, '#8d8d86')));
+  } else if (g.region === 'cave') {
+    // rooms as ovals and passages as rotated bars, traced from the same layout the cave was carved from
+    const floorC = '#7a6448';
+    Object.entries(CAVE_ROOMS).forEach(([key, [X, Y, RX, RY]]) => {
+      const [x, z] = CPX(X, Y);
+      const rx = RX / 8;
+      const rz = RY / 8;
+      marks.push(<View key={'cr' + key} style={[styles.mmDot, pos(x - rx, z - rz), { width: rx * 2 * s, height: rz * 2 * s, borderRadius: Math.max(rx, rz) * s, backgroundColor: floorC }]} />);
+    });
+    CAVE_PATHS.forEach((pa, j) =>
+      pa.pts.slice(1).forEach((pt, i) => {
+        const [ax, az] = CPX(...pa.pts[i]);
+        const [bx, bz] = CPX(...pt);
+        const wd = (pa.w / 8) * s;
+        const len = Math.hypot(bx - ax, bz - az) * s + wd;
+        const m = pos((ax + bx) / 2, (az + bz) / 2);
+        marks.push(<View key={`cp${j}_${i}`} style={[styles.mmDot, { left: m.left - len / 2, top: m.top - wd / 2, width: len, height: wd, backgroundColor: floorC, transform: [{ rotate: `${Math.atan2(bz - az, bx - ax)}rad` }] }]} />);
+      }),
+    );
+    w.decor.ponds.forEach((pd, i) => marks.push(dot('p' + i, pd.x, pd.z, pd.r * 1.6 * s, '#2f86c0')));
+    w.doors.forEach((dr) => !dr.open && marks.push(dot('d' + dr.id, dr.x, dr.z, big ? 9 : 5, '#c9a24a', { borderRadius: 1 })));
+    w.nodes.forEach((n) => {
+      if (n.type === 'lever') marks.push(dot('lv' + n.id, n.x, n.z, big ? 8 : 5, n.pulled ? '#6ad06a' : '#ffd166'));
+      if (n.type === 'chest') marks.push(dot('ch' + n.id, n.x, n.z, big ? 8 : 5, n.opened ? '#8a7a5a' : '#ffb020', { borderRadius: 1 }));
+      if (n.type === 'drop' && n.item === 'goldenKey') marks.push(dot('key', n.x, n.z, big ? 9 : 6, '#ffe066'));
+    });
   } else {
     w.decor.mesas.forEach((m, i) => marks.push(dot('m' + i, m.x, m.z, m.r * 2 * s, '#a8653f')));
     w.decor.ponds.forEach((pd, i) => marks.push(dot('p' + i, pd.x, pd.z, pd.r * 2 * s + 2, '#2f86c0')));
@@ -4473,7 +6158,10 @@ function Minimap({ g, big, size, onToggle }) {
     const C = DESERT.camp;
     marks.push(dot('camp', C.x, C.z, C.r * 2 * s, 'rgba(140,30,30,0.25)', { borderWidth: 1.5, borderColor: '#b23a2a' }));
   }
-  w.nodes.forEach((n) => n.type === 'trail' && marks.push(dot('trail' + n.id, n.x, n.z, big ? 9 : 6, '#f2e6c8', { borderWidth: 1, borderColor: '#5a4030' })));
+  w.nodes.forEach((n) => {
+    if (n.type === 'trail' || n.type === 'caveexit') marks.push(dot('trail' + n.id, n.x, n.z, big ? 9 : 6, '#f2e6c8', { borderWidth: 1, borderColor: '#5a4030' }));
+    if (n.type === 'cavemouth' && g.caveSeen) marks.push(dot('cave' + n.id, n.x, n.z, big ? 11 : 7, '#1a120c', { borderWidth: 1.5, borderColor: '#e9c46a' }));
+  });
   if (g.region === 'desert') {
     const side = PLOT.half * 2 * s;
     marks.push(<View key="plot" style={[styles.mmDot, pos(PLOT.x - PLOT.half, PLOT.z - PLOT.half), { width: side, height: side, borderWidth: 1.5, borderColor: g.plotOwned ? '#3a9a4a' : '#8a5a32', backgroundColor: g.plotOwned ? 'rgba(58,154,74,0.25)' : 'rgba(138,90,50,0.15)' }]} />);
@@ -4483,13 +6171,14 @@ function Minimap({ g, big, size, onToggle }) {
   w.enemies.forEach((e) => {
     const D = ENEMIES[e.type];
     if (D.passive || dist2(e.x, e.z, p.x, p.z) > (big ? 999 : 40)) return;
-    marks.push(dot('e' + e.id, e.x, e.z, D.boss ? 8 : 4, D.human ? '#ff4a3a' : '#ff9a7a'));
+    if (e.dormant) return;
+    marks.push(dot('e' + e.id, e.x, e.z, D.boss ? 8 : 4, e.type === 'mummy' ? '#5aff8a' : D.human ? '#ff4a3a' : '#ff9a7a'));
   });
   const tgt = objectiveTarget(g);
   const arrowDeg = (Math.atan2(Math.sin(p.rot), -Math.cos(p.rot)) * 180) / Math.PI;
   return (
     <Pressable onPress={onToggle} style={[styles.minimap, { width: size, height: size, borderRadius: size / 2 }]}>
-      <View style={[StyleSheet.absoluteFill, { borderRadius: size / 2, overflow: 'hidden', backgroundColor: g.region === 'desert' ? '#d9b77a' : '#3f7a35' }]}>
+      <View style={[StyleSheet.absoluteFill, { borderRadius: size / 2, overflow: 'hidden', backgroundColor: g.region === 'desert' ? '#d9b77a' : g.region === 'cave' ? '#17110c' : '#3f7a35' }]}>
         {marks}
         {tgt && (
           <Text style={[styles.mmStar, pos(tgt.x, tgt.z), big && { fontSize: 18, marginLeft: -9, marginTop: -12 }]} pointerEvents="none">
@@ -4649,7 +6338,7 @@ function createController(game) {
     // debugging hooks for the browser console
     window.__game = () => c.g;
     window.__cam = () => c.E && c.E.cam;
-    window.__api = { doUse, doAttack, doDodge, craft, eat, drink, getUseTarget, spawnEnemy, travel, buy, sell, acceptQuest, turnInQuest, startLevel2, respawnInVillage, smelt, forge, equipWeapon, buyPlot, startRaid, buildSpot, raiders, exposedBuilds, inSafeZone, weapon, armorValue };
+    window.__api = { doUse, doAttack, doDodge, craft, eat, drink, getUseTarget, spawnEnemy, travel, buy, sell, acceptQuest, turnInQuest, startLevel2, respawnInVillage, smelt, forge, equipWeapon, buyPlot, startRaid, buildSpot, raiders, exposedBuilds, inSafeZone, weapon, armorValue, bossNote };
     const fresh = () => Date.now() - c.lastTouchAt > 800;
     const md = (e) => {
       if (!fresh() || e.button !== 0) return;
@@ -4812,7 +6501,13 @@ export default function App() {
   const current = currentObjective(g);
   const doneCount = list.filter((o) => g.done[o.id]).length;
   const recent = g.msgs.filter((m) => g.time - m.t < 4.5);
-  const king = g.region === 'desert' ? g.w.enemies.find((e) => e.type === 'king' && e.state !== 'idle' && dist2(e.x, e.z, p.x, p.z) < 25) : null;
+  const king =
+    g.region === 'desert'
+      ? g.w.enemies.find((e) => e.type === 'king' && e.state !== 'idle' && dist2(e.x, e.z, p.x, p.z) < 25)
+      : g.region === 'cave'
+        ? g.w.enemies.find((e) => e.type === 'mummy' && e.awake && dist2(e.x, e.z, p.x, p.z) < 30)
+        : null;
+  const kingNote = king ? bossNote(g, king) : '';
   const raid = g.region === 'desert' ? raiders(g) : [];
   const raidTargetB = raid.length ? g.w.builds.find((b) => raid.some((e) => e.target === b.id)) : null;
   const closePanel = () => setPanel(null);
@@ -4927,10 +6622,11 @@ export default function App() {
           )}
           {king && (
             <View style={[styles.bossWrap, { top: topPad + 6 }]} pointerEvents="none">
-              <Text style={styles.bossName}>👑 Marauder King</Text>
+              <Text style={styles.bossName}>{king.type === 'mummy' ? '☥ Ancient Mummy Guardian' : '👑 Marauder King'}</Text>
               <View style={styles.bossBg}>
-                <View style={[styles.bossFill, { width: `${(100 * king.hp) / king.maxHp}%` }]} />
+                <View style={[styles.bossFill, { width: `${(100 * king.hp) / king.maxHp}%` }, king.inv && { backgroundColor: '#3fbf6a' }]} />
               </View>
+              {!!kingNote && <Text style={styles.raidSub}>{kingNote}</Text>}
             </View>
           )}
 
@@ -5018,7 +6714,7 @@ export default function App() {
                 <Text style={[styles.cardDesc, { textAlign: 'center' }]}>
                   Cause: {g.deathReason}. Day {g.day}, {g.kills} {g.kills === 1 ? 'enemy' : 'enemies'} defeated.
                 </Text>
-                {g.region === 'desert' ? (
+                {g.region !== 'forest' ? (
                   <Pressable onPress={() => ctl.current.respawn()} style={styles.startBtn}>
                     <Text style={styles.startTxt}>Wake up in the village (lose half your gold)</Text>
                   </Pressable>
@@ -5065,11 +6761,11 @@ const styles = StyleSheet.create({
   goalPillTxt: { color: '#2a2108', fontWeight: '800', fontSize: 12 },
   msgs: { marginTop: 8, maxWidth: '68%' },
   msgTxt: { alignSelf: 'flex-start', color: '#fff', fontSize: 12.5, backgroundColor: '#0008', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, marginBottom: 4, overflow: 'hidden' },
-  bossWrap: { position: 'absolute', alignSelf: 'center', alignItems: 'center', width: 220 },
+  bossWrap: { position: 'absolute', alignSelf: 'center', alignItems: 'center', width: 260 },
   bossName: { color: '#ffd166', fontWeight: '900', fontSize: 13, ...shadowTxt },
   bossBg: { width: '100%', height: 10, borderRadius: 5, backgroundColor: '#0009', marginTop: 3, overflow: 'hidden', borderWidth: 1, borderColor: '#ffd16688' },
   bossFill: { height: '100%', backgroundColor: '#d63a2a' },
-  raidSub: { color: '#ffe9c0', fontSize: 11, fontWeight: '700', marginTop: 2, ...shadowTxt },
+  raidSub: { color: '#ffe9c0', fontSize: 11, fontWeight: '700', marginTop: 2, textAlign: 'center', ...shadowTxt },
   warnTxt: { color: '#ffd9a0', marginBottom: 8, backgroundColor: '#3a2a1466', borderRadius: 10, padding: 8 },
   equipped: { backgroundColor: '#6a8a5a' },
   wornTxt: { color: '#9fe08a', fontWeight: '800', fontSize: 12 },
